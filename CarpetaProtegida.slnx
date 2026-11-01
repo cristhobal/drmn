@@ -1,8 +1,0 @@
-<Solution>
-  <Folder Name="/src/">
-    <Project Path="src/CarpetaProtegida/CarpetaProtegida.csproj" />
-  </Folder>
-  <Folder Name="/tests/">
-    <Project Path="tests/CarpetaProtegida.Tests/CarpetaProtegida.Tests.csproj" />
-  </Folder>
-</Solution>

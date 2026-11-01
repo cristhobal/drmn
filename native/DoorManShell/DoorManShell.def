@@ -1,0 +1,4 @@
+LIBRARY DoorManShell
+EXPORTS
+    DllGetClassObject PRIVATE
+    DllCanUnloadNow PRIVATE
