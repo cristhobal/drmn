@@ -1,0 +1,47 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net10.0-windows</TargetFramework>
+    <UseWindowsForms>true</UseWindowsForms>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <AssemblyName>CarpetaProtegida</AssemblyName>
+    <RootNamespace>CarpetaProtegida</RootNamespace>
+    <ApplicationHighDpiMode>PerMonitorV2</ApplicationHighDpiMode>
+    <ApplicationVisualStyles>true</ApplicationVisualStyles>
+    <SatelliteResourceLanguages>es</SatelliteResourceLanguages>
+    <Product>Carpeta Protegida</Product>
+    <Description>Protege carpetas con contraseña desde el Explorador de archivos</Description>
+    <Version>1.1.0</Version>
+    <NeutralLanguage>es-ES</NeutralLanguage>
+    <ShellExtension>..\..\native\CarpetaProtegidaShell\bin\CarpetaProtegidaShell.dll</ShellExtension>
+    <ApplicationIcon>..\..\icons\generados\filled_locked.ico</ApplicationIcon>
+  </PropertyGroup>
+
+  <!--
+    Iconos de carpeta (bloqueada/desbloqueada, vacía/con contenido): se instalan en «iconos».
+    Son los de icons\generados (herramientas\generar-iconos.ps1), con todos los tamaños que usa Windows.
+  -->
+  <ItemGroup>
+    <None Include="..\..\icons\generados\*.ico"
+          Link="iconos\%(Filename)%(Extension)"
+          CopyToOutputDirectory="PreserveNewest"
+          CopyToPublishDirectory="PreserveNewest"
+          ExcludeFromSingleFile="true" />
+  </ItemGroup>
+
+  <!-- Extensión nativa del Explorador (native\CarpetaProtegidaShell\build.ps1): va junto al ejecutable. -->
+  <ItemGroup Condition="Exists('$(ShellExtension)')">
+    <None Include="$(ShellExtension)"
+          Link="CarpetaProtegidaShell.dll"
+          CopyToOutputDirectory="PreserveNewest"
+          CopyToPublishDirectory="PreserveNewest"
+          ExcludeFromSingleFile="true" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <InternalsVisibleTo Include="CarpetaProtegida.Tests" />
+  </ItemGroup>
+
+</Project>

@@ -1,0 +1,4 @@
+LIBRARY CarpetaProtegidaShell
+EXPORTS
+    DllGetClassObject PRIVATE
+    DllCanUnloadNow PRIVATE
