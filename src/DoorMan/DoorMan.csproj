@@ -17,7 +17,18 @@
     <NeutralLanguage>es-ES</NeutralLanguage>
     <ShellExtension>..\..\native\DoorManShell\bin\DoorManShell.dll</ShellExtension>
     <ApplicationIcon>..\..\icons\generados\filled_locked.ico</ApplicationIcon>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+    <!--
+      Los archivos marcadores (API Cloud Files) necesitan Windows 10 1709 o posterior. No se sube la
+      versión de destino porque añadiría la proyección de WinRT (unos 25 MB) sin usarla.
+    -->
+    <NoWarn>$(NoWarn);CA1416</NoWarn>
   </PropertyGroup>
+
+  <!-- Declaraciones de la API Cloud Files de Windows (NativeMethods.txt), generadas al compilar. -->
+  <ItemGroup>
+    <PackageReference Include="Microsoft.Windows.CsWin32" Version="0.3.367" PrivateAssets="all" />
+  </ItemGroup>
 
   <!--
     Iconos de carpeta (bloqueada/desbloqueada, vacía/con contenido): se instalan en «iconos».

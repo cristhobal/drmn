@@ -1,9 +1,15 @@
-﻿using System.Security.Cryptography;
+using System.Security.Cryptography;
+using DoorMan.Agent;
 using DoorMan.Core;
 using DoorMan.Crypto;
 
 namespace DoorMan.Tests;
 
+// Las pruebas cambian FolderLocker.UsePlaceholders: no pueden ejecutarse en paralelo.
+[CollectionDefinition("FolderLocker", DisableParallelization = true)]
+public sealed class FolderLockerCollection;
+
+[Collection("FolderLocker")]
 public sealed class FolderLockerTests : IDisposable
 {
     const int FastIterations = 10_000;
@@ -18,6 +24,8 @@ public sealed class FolderLockerTests : IDisposable
 
     public void Dispose()
     {
+        FolderLocker.UsePlaceholders = true;
+        CloudFiles.Unregister(_folder);
         foreach (var e in new DirectoryInfo(_root).EnumerateFileSystemInfos("*", SearchOption.AllDirectories))
             e.Attributes = FileAttributes.Normal;
         new DirectoryInfo(_root).Attributes = FileAttributes.Normal;
@@ -46,9 +54,61 @@ public sealed class FolderLockerTests : IDisposable
         return files;
     }
 
-    [Fact]
-    public void Lock_LeavesOnlyCiphertext_AndUnlockRestoresEverything()
+    void AssertRestored(Dictionary<string, byte[]> files)
     {
+        Assert.False(FolderLocker.IsLocked(_folder));
+        Assert.False(CloudFiles.IsSyncRoot(_folder));
+        Assert.False(File.Exists(Path.Combine(_folder, "desktop.ini")));
+        foreach (var (rel, data) in files)
+            Assert.Equal(data, File.ReadAllBytes(Path.Combine(_folder, rel)));
+        Assert.True(Directory.Exists(Path.Combine(_folder, @"Carpeta vacía\otra vacía")));
+        Assert.True(File.GetAttributes(Path.Combine(_folder, "solo lectura.txt")).HasFlag(FileAttributes.ReadOnly));
+        Assert.Equal(new DateTime(2020, 5, 17, 10, 30, 0, DateTimeKind.Utc), File.GetLastWriteTimeUtc(Path.Combine(_folder, "nota.txt")));
+        Assert.False(new DirectoryInfo(_folder).Attributes.HasFlag(FileAttributes.ReadOnly));
+        // Ni marcadores ni restos de la carpeta temporal del desbloqueo.
+        foreach (var e in new DirectoryInfo(_folder).EnumerateFileSystemInfos("*", new EnumerationOptions { AttributesToSkip = 0, RecurseSubdirectories = true }))
+            Assert.False(e.Attributes.HasFlag(FileAttributes.ReparsePoint), e.FullName);
+        Assert.Equal(files.Keys.Order(), Directory.GetFiles(_folder, "*", new EnumerationOptions { AttributesToSkip = 0, RecurseSubdirectories = true })
+            .Select(p => Path.GetRelativePath(_folder, p)).Order());
+    }
+
+    [Fact]
+    public void Lock_LeavesPlaceholdersWithoutContent_AndUnlockRestoresEverything()
+    {
+        var files = CreateSampleContent();
+        using var key = KeyMaterial.Create("secreta ñ", FastIterations);
+
+        var result = FolderLocker.Lock(_folder, key);
+
+        Assert.Empty(result.NotDeleted);
+        Assert.Empty(result.InUse);
+        Assert.True(FolderLocker.IsLocked(_folder));
+        Assert.True(CloudFiles.IsSyncRoot(_folder));
+        foreach (var (rel, data) in files)
+        {
+            var path = Path.Combine(_folder, rel);
+            Assert.Equal(data.Length, new FileInfo(path).Length);
+            if (data.Length > 0)
+            {
+                Assert.Equal(PlaceholderState.Dehydrated, CloudFiles.GetState(path));
+                // Sin el agente nadie entrega el contenido: no se puede leer.
+                Assert.ThrowsAny<IOException>(() => File.ReadAllBytes(path));
+            }
+        }
+        var vaultBytes = File.ReadAllBytes(Path.Combine(_folder, FolderLocker.VaultFileName));
+        Assert.Equal(-1, vaultBytes.AsSpan().IndexOf("Contraseña"u8));
+        Assert.Equal(-1, vaultBytes.AsSpan().IndexOf("nota.txt"u8));
+
+        using var opened = FolderLocker.OpenKey(_folder, "secreta ñ");
+        FolderLocker.Unlock(_folder, opened);
+
+        AssertRestored(files);
+    }
+
+    [Fact]
+    public void WithoutPlaceholders_LockLeavesOnlyCiphertext_AndUnlockRestoresEverything()
+    {
+        FolderLocker.UsePlaceholders = false;
         var files = CreateSampleContent();
         using var key = KeyMaterial.Create("secreta ñ", FastIterations);
 
@@ -58,21 +118,125 @@ public sealed class FolderLockerTests : IDisposable
         Assert.True(FolderLocker.IsLocked(_folder));
         var remaining = Directory.GetFileSystemEntries(_folder).Select(p => Path.GetFileName(p)!).Order().ToArray();
         Assert.Equal(["Desbloquear carpeta.doorman", "desktop.ini"], remaining);
-        var vaultBytes = File.ReadAllBytes(Path.Combine(_folder, FolderLocker.VaultFileName));
-        Assert.Equal(-1, vaultBytes.AsSpan().IndexOf("Contraseña"u8));
-        Assert.Equal(-1, vaultBytes.AsSpan().IndexOf("nota.txt"u8));
 
         using var opened = FolderLocker.OpenKey(_folder, "secreta ñ");
         FolderLocker.Unlock(_folder, opened);
 
-        Assert.False(FolderLocker.IsLocked(_folder));
-        Assert.False(File.Exists(Path.Combine(_folder, "desktop.ini")));
-        foreach (var (rel, data) in files)
-            Assert.Equal(data, File.ReadAllBytes(Path.Combine(_folder, rel)));
-        Assert.True(Directory.Exists(Path.Combine(_folder, @"Carpeta vacía\otra vacía")));
-        Assert.True(File.GetAttributes(Path.Combine(_folder, "solo lectura.txt")).HasFlag(FileAttributes.ReadOnly));
-        Assert.Equal(new DateTime(2020, 5, 17, 10, 30, 0, DateTimeKind.Utc), File.GetLastWriteTimeUtc(Path.Combine(_folder, "nota.txt")));
-        Assert.False(new DirectoryInfo(_folder).Attributes.HasFlag(FileAttributes.ReadOnly));
+        AssertRestored(files);
+    }
+
+    /// <summary>
+    /// Un programa lee un archivo de la carpeta bloqueada: Windows se lo pide al proveedor, que
+    /// desbloquea la carpeta (aquí sin ventana, como si se hubiera escrito la contraseña) y se lo entrega.
+    /// </summary>
+    [Fact]
+    public void ReadingAPlaceholder_UnlocksTheFolder_AndTheProgramGetsTheFile()
+    {
+        var files = CreateSampleContent();
+        using var key = KeyMaterial.Create("x", FastIterations);
+        FolderLocker.Lock(_folder, key);
+
+        int prompts = 0;
+        var provider = new CloudProvider((folder, session) =>
+        {
+            Interlocked.Increment(ref prompts);
+            Task.Run(() =>
+            {
+                bool ok = false;
+                try
+                {
+                    using var opened = FolderLocker.OpenKey(folder, "x");
+                    FolderLocker.Unlock(folder, opened, extracted: session.Extracted);
+                    ok = true;
+                }
+                finally
+                {
+                    session.Finish(ok);
+                }
+            });
+        });
+        provider.Connect(_folder);
+        try
+        {
+            var big = @"Fotos\vacaciones año 2025.jpg";
+            // Dos programas a la vez: una sola petición de contraseña y los dos reciben su archivo.
+            var reads = new[] { big, "nota.txt" }.Select(rel => Task.Run(() => File.ReadAllBytes(Path.Combine(_folder, rel)))).ToArray();
+            Assert.True(Task.WaitAll(reads, TimeSpan.FromSeconds(60)));
+            Assert.Equal(files[big], reads[0].Result);
+            Assert.Equal(files["nota.txt"], reads[1].Result);
+            Assert.Equal(1, prompts);
+            SpinWait.SpinUntil(() => !FolderLocker.IsLocked(_folder), TimeSpan.FromSeconds(30));
+        }
+        finally
+        {
+            provider.Disconnect(_folder);
+        }
+        AssertRestored(files);
+    }
+
+    [Fact]
+    public void CancellingThePassword_DeniesTheProgram_AndKeepsTheFolderLocked()
+    {
+        var files = CreateSampleContent();
+        using var key = KeyMaterial.Create("x", FastIterations);
+        FolderLocker.Lock(_folder, key);
+
+        var provider = new CloudProvider((_, session) => Task.Run(() => session.Finish(unlocked: false)));
+        provider.Connect(_folder);
+        try
+        {
+            Assert.ThrowsAny<IOException>(() => File.ReadAllBytes(Path.Combine(_folder, "nota.txt")));
+        }
+        finally
+        {
+            provider.Disconnect(_folder);
+        }
+        Assert.True(FolderLocker.IsLocked(_folder));
+        Assert.Equal(PlaceholderState.Dehydrated, CloudFiles.GetState(Path.Combine(_folder, "nota.txt")));
+
+        using var opened = FolderLocker.OpenKey(_folder, "x");
+        FolderLocker.Unlock(_folder, opened);
+        AssertRestored(files);
+    }
+
+    [Fact]
+    public void FileOpenWhileLocking_IsEmptiedOnceClosed()
+    {
+        var files = CreateSampleContent();
+        using var key = KeyMaterial.Create("x", FastIterations);
+        var path = Path.Combine(_folder, "nota.txt");
+
+        LockResult result;
+        using (new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.Read))
+        {
+            result = FolderLocker.Lock(_folder, key);
+            Assert.Equal(["nota.txt"], result.InUse);
+            Assert.Equal(PlaceholderState.Hydrated, CloudFiles.GetState(path));
+            Assert.False(CloudFiles.TryDehydrate(path));
+        }
+        // En la práctica lo hace el agente, que está conectado a la carpeta.
+        using (CloudFiles.TryConnectForConversion(_folder))
+            Assert.True(CloudFiles.TryDehydrate(path));
+        Assert.Equal(PlaceholderState.Dehydrated, CloudFiles.GetState(path));
+
+        using var opened = FolderLocker.OpenKey(_folder, "x");
+        FolderLocker.Unlock(_folder, opened);
+        AssertRestored(files);
+    }
+
+    [Fact]
+    public void PlaceholdersRenamedOrDeletedWhileLocked_AreRestoredFromTheVault()
+    {
+        var files = CreateSampleContent();
+        using var key = KeyMaterial.Create("x", FastIterations);
+        FolderLocker.Lock(_folder, key);
+        File.Move(Path.Combine(_folder, "nota.txt"), Path.Combine(_folder, "renombrada.txt"));
+        File.SetAttributes(Path.Combine(_folder, "solo lectura.txt"), FileAttributes.Normal);
+        File.Delete(Path.Combine(_folder, "solo lectura.txt"));
+
+        using var opened = FolderLocker.OpenKey(_folder, "x");
+        FolderLocker.Unlock(_folder, opened);
+        AssertRestored(files);
     }
 
     [Fact]
@@ -137,8 +301,9 @@ public sealed class FolderLockerTests : IDisposable
         Assert.Throws<InvalidDataException>(() => FolderLocker.Unlock(_folder, opened));
 
         Assert.True(FolderLocker.IsLocked(_folder));
-        var remaining = Directory.GetFileSystemEntries(_folder).Select(p => Path.GetFileName(p)!).Order().ToArray();
-        Assert.Equal(["Desbloquear carpeta.doorman", "desktop.ini"], remaining);
+        Assert.True(CloudFiles.IsSyncRoot(_folder));
+        Assert.Equal(PlaceholderState.Dehydrated, CloudFiles.GetState(Path.Combine(_folder, "nota.txt")));
+        Assert.Empty(Directory.GetDirectories(_folder, ".doorman-*", new EnumerationOptions { AttributesToSkip = 0 }));
     }
 
     [Fact]

@@ -19,26 +19,42 @@ internal static class Notifications
     public static void Info(string title, string text) => Show(title, text, ToolTipIcon.Info);
 
     /// <summary>
-    /// Muestra la notificación y espera a que se cierre (o unos segundos), porque el proceso termina
-    /// justo después y, al quitar su icono, Windows retiraría también la notificación.
+    /// Muestra la notificación y la retira cuando se cierra (o a los pocos segundos). Fuera del agente
+    /// espera hasta entonces, porque el proceso termina justo después y, al quitar su icono, Windows
+    /// retiraría también la notificación. En el agente no espera: su bucle de mensajes sigue en marcha.
     /// </summary>
     static void Show(string title, string text, ToolTipIcon icon)
     {
-        using var tray = new NotifyIcon
+        var tray = new NotifyIcon
         {
             Icon = AppIcons.Lock,
             Text = "DoorMan",
             Visible = true,
         };
-        using var timer = new System.Windows.Forms.Timer { Interval = VisibleMilliseconds };
-        using var context = new ApplicationContext();
-        tray.BalloonTipClosed += (_, _) => context.ExitThread();
-        tray.BalloonTipClicked += (_, _) => context.ExitThread();
-        timer.Tick += (_, _) => context.ExitThread();
+        var timer = new System.Windows.Forms.Timer { Interval = VisibleMilliseconds };
+        bool running = Application.MessageLoop;
+        var context = running ? null : new ApplicationContext();
+        bool closed = false;
+        void Close()
+        {
+            if (closed)
+                return;
+            closed = true;
+            timer.Dispose();
+            tray.Visible = false;
+            tray.Dispose();
+            context?.ExitThread();
+        }
+        tray.BalloonTipClosed += (_, _) => Close();
+        tray.BalloonTipClicked += (_, _) => Close();
+        timer.Tick += (_, _) => Close();
         tray.ShowBalloonTip(VisibleMilliseconds, Truncate(title, MaxTitle), Truncate(text, MaxText), icon);
         timer.Start();
-        Application.Run(context);
-        tray.Visible = false;
+        if (context is not null)
+        {
+            Application.Run(context);
+            context.Dispose();
+        }
     }
 
     static string Truncate(string value, int max) =>

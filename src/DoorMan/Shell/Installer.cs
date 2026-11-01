@@ -6,8 +6,8 @@ namespace DoorMan.Shell;
 
 /// <summary>
 /// Instalación por usuario (sin administrador) en %LOCALAPPDATA%\Programs\DoorMan:
-/// copia el ejecutable, activa la integración con el Explorador, lo añade al inicio de sesión
-/// y lo registra en «Aplicaciones instaladas» de Configuración.
+/// copia el ejecutable, activa la integración con el Explorador, añade el agente al inicio de
+/// sesión (y lo arranca) y lo registra en «Aplicaciones instaladas» de Configuración.
 /// </summary>
 internal static class Installer
 {
@@ -53,6 +53,8 @@ internal static class Installer
             app.SetValue("NoRepair", 1, RegistryValueKind.DWord);
         }
         RefreshIconCache();
+        // El agente atiende a las carpetas bloqueadas desde ya, sin esperar al próximo inicio de sesión.
+        Process.Start(new ProcessStartInfo(InstalledExe, "--agente") { UseShellExecute = false })?.Dispose();
         return 0;
     }
 
@@ -77,12 +79,6 @@ internal static class Installer
                 UseShellExecute = false,
             })?.Dispose();
     }
-
-    /// <summary>
-    /// Arranque silencioso al iniciar sesión: mantiene activa y al día la integración con el
-    /// Explorador (incluida la extensión que pide la contraseña) y termina. Nunca muestra ventanas.
-    /// </summary>
-    public static void RunAtStartup() => ShellIntegration.Register();
 
     /// <summary>
     /// Los iconos se reinstalan con la misma ruta, así que el Explorador seguiría mostrando la copia

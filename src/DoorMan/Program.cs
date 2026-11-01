@@ -1,3 +1,4 @@
+using DoorMan.Agent;
 using DoorMan.Core;
 using DoorMan.Shell;
 using DoorMan.UI;
@@ -8,18 +9,21 @@ static class Program
 {
     /// <summary>
     /// Sin argumentos abre la ventana principal. Desde el Explorador se invoca con
-    /// <c>--proteger</c>, <c>--abrir</c> o <c>--rebloquear</c> y la ruta de la carpeta.
+    /// <c>--proteger</c>, <c>--abrir</c> o <c>--rebloquear</c> y la ruta de la carpeta; estas órdenes
+    /// las ejecuta el agente en segundo plano (<c>--inicio</c> al iniciar sesión, o <c>--agente</c>).
     /// </summary>
     [STAThread]
     static int Main(string[] args)
     {
         var command = args.Length > 0 ? args[0].ToLowerInvariant() : "";
-        if (command == "--inicio")
+        ApplicationConfiguration.Initialize();
+
+        if (command is "--inicio" or "--agente")
         {
-            // Inicio de sesión: completamente en segundo plano, sin ventanas ni mensajes de error.
+            // Completamente en segundo plano: sin ventanas salvo las que pide el usuario (contraseñas, avisos).
             try
             {
-                Installer.RunAtStartup();
+                AgentHost.Run();
                 return 0;
             }
             catch (Exception)
@@ -28,26 +32,19 @@ static class Program
             }
         }
 
-        ApplicationConfiguration.Initialize();
-
         try
         {
+            if (Commands.FromArguments(args) is { } action)
+            {
+                // Lo normal es que lo haga el agente; si no se puede arrancar, se hace aquí mismo.
+                if (!AgentClient.TrySend(args))
+                    action();
+                return 0;
+            }
             switch (command)
             {
                 case "":
                     Application.Run(new MainForm());
-                    break;
-                case "--proteger" when args.Length == 2:
-                    Commands.Protect(args[1]);
-                    break;
-                case "--abrir" when args.Length == 2:
-                    Commands.Open(args[1]);
-                    break;
-                case "--abrir" when args.Length == 4 && args[2] == "--ventana" && long.TryParse(args[3], out var window):
-                    Commands.Open(args[1], new IntPtr(window));
-                    break;
-                case "--rebloquear" when args.Length == 2:
-                    Commands.Relock(args[1]);
                     break;
                 case "--registrar":
                     ShellIntegration.Register();
@@ -72,7 +69,7 @@ static class Program
                     Dialogs.Info("Uso de DoorMan",
                         "DoorMan.exe [--proteger | --abrir | --rebloquear] \"carpeta\"\n" +
                         "DoorMan.exe [--registrar | --desregistrar]\n" +
-                        "DoorMan.exe [--instalar | --desinstalar | --inicio]");
+                        "DoorMan.exe [--instalar | --desinstalar | --inicio | --agente]");
                     return 2;
             }
             return 0;

@@ -1,26 +1,36 @@
+using System.Runtime.InteropServices;
 using System.Text;
 using DoorMan.Crypto;
 using DoorMan.Shell;
 
 namespace DoorMan.Core;
 
-internal sealed record LockResult(IReadOnlyList<string> NotDeleted);
+/// <param name="NotDeleted">Elementos que siguen sin cifrar porque no se pudieron borrar.</param>
+/// <param name="InUse">Archivos abiertos al bloquear: siguen legibles hasta que se cierren (ver <see cref="CloudFiles.TryDehydrate"/>).</param>
+internal sealed record LockResult(IReadOnlyList<string> NotDeleted, IReadOnlyList<string> InUse);
 
 /// <summary>
-/// Bloqueo y desbloqueo de carpetas. Una carpeta bloqueada solo contiene el archivo cifrado
-/// <see cref="VaultFileName"/> y un desktop.ini que le pone el icono de candado.
+/// Bloqueo y desbloqueo de carpetas. Todo el contenido se guarda en el archivo cifrado
+/// <see cref="VaultFileName"/> y un desktop.ini le pone el icono de candado. Los archivos se
+/// quedan como marcadores sin contenido (<see cref="CloudFiles"/>), de modo que cualquier programa
+/// que intente abrir uno hace que DoorMan pida la contraseña. Si el volumen no admite marcadores,
+/// los originales se borran y la carpeta solo contiene el archivo cifrado.
 /// </summary>
 internal static class FolderLocker
 {
     public const string VaultExtension = ".doorman";
     public const string VaultFileName = "Desbloquear carpeta" + VaultExtension;
-    const string TempFileName = ".carpeta-protegida.tmp";
+    const string TempFileName = ".doorman.tmp";
+    const string StagingDirName = ".doorman-desbloqueo";
     const string DesktopIni = "desktop.ini";
     const string DesktopIniMarker = "; DoorMan";
     const string UnlockedMarker = DesktopIniMarker + " desbloqueada";
     const string ReadOnlyAddedMarker = "; DoorMan-solo-lectura";
     // Registro raíz (1 + 1 + 4 + 8 + 8 bytes) + registro final (1): lo que ocupa una carpeta vacía.
     const int EmptyArchiveSize = 23;
+
+    /// <summary>Solo para las pruebas: bloquear sin marcadores, como en los volúmenes que no los admiten.</summary>
+    internal static bool UsePlaceholders { get; set; } = true;
 
     public static bool IsLocked(string folder) => File.Exists(Path.Combine(folder, VaultFileName));
 
@@ -38,7 +48,7 @@ internal static class FolderLocker
         RemoveUnlockedAppearance(folder);
         var tmp = Path.Combine(folder, TempFileName);
         DeleteFile(tmp);
-        var scan = FolderScan.Run(folder, new HashSet<string>(StringComparer.OrdinalIgnoreCase) { TempFileName });
+        var scan = FolderScan.Run(folder, new HashSet<string>(StringComparer.OrdinalIgnoreCase) { TempFileName, StagingDirName });
         var tracker = new ProgressTracker(progress, scan.TotalBytes * 2);
 
         try
@@ -72,12 +82,65 @@ internal static class FolderLocker
         HideVault(folder);
 
         tracker.SetItem("Eliminando los archivos sin cifrar…");
-        var notDeleted = DeleteOriginals(scan);
+        // Una raíz que haya quedado registrada (p. ej. tras un corte de luz) se da de baja antes.
+        CloudFiles.Unregister(folder);
+        LockResult? result = null;
+        if (UsePlaceholders && CloudFiles.TryRegister(folder))
+        {
+            using var connection = CloudFiles.TryConnectForConversion(folder);
+            if (connection is not null)
+                result = ConvertToPlaceholders(scan);
+            else
+                CloudFiles.Unregister(folder);
+        }
+        result ??= new LockResult(DeleteOriginals(scan), []);
 
         WriteDesktopIni(folder, hasContent: scan.Entries.Count > 0);
         File.SetAttributes(folder, FolderArchive.Restorable(scan.RootEntry.Attributes) | FileAttributes.ReadOnly);
         ShellNotify.ItemChanged(folder);
-        return new LockResult(notDeleted);
+        return result;
+    }
+
+    /// <summary>
+    /// Deja cada archivo como marcador sin contenido. Si uno no se puede convertir, se borra como en
+    /// el modo sin marcadores.
+    /// </summary>
+    static LockResult ConvertToPlaceholders(FolderScan scan)
+    {
+        var notDeleted = new List<string>();
+        var inUse = new List<string>();
+        foreach (var e in scan.Entries.Where(e => e.Kind == EntryKind.Directory))
+        {
+            try
+            {
+                CloudFiles.ConvertToPlaceholder(Path.Combine(scan.Root, e.RelativePath), e.RelativePath, isDirectory: true);
+            }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or COMException)
+            {
+                // Una carpeta normal dentro de la raíz también funciona.
+            }
+        }
+        foreach (var e in scan.Entries.Where(e => e.Kind == EntryKind.File))
+        {
+            var path = Path.Combine(scan.Root, e.RelativePath);
+            try
+            {
+                if (!CloudFiles.ConvertToPlaceholder(path, e.RelativePath, isDirectory: false))
+                    inUse.Add(e.RelativePath);
+            }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or COMException)
+            {
+                try
+                {
+                    DeleteFile(path);
+                }
+                catch (Exception ex2) when (ex2 is IOException or UnauthorizedAccessException)
+                {
+                    notDeleted.Add(e.RelativePath);
+                }
+            }
+        }
+        return new LockResult(notDeleted, inUse);
     }
 
     /// <summary>Oculta el archivo cifrado como archivo de sistema.</summary>
@@ -103,34 +166,137 @@ internal static class FolderLocker
         return KeyMaterial.Open(VaultFile.GetEnvelope(VaultFile.ReadHeader(fs)), password);
     }
 
-    /// <summary>Descifra el contenido en la carpeta. Si falla, deshace lo restaurado y la deja bloqueada.</summary>
-    public static void Unlock(string folder, KeyMaterial key, IProgress<ProgressInfo>? progress = null)
+    /// <summary>
+    /// Descifra el contenido. Primero se descifra todo en una carpeta oculta dentro de la propia
+    /// carpeta; si eso falla, la carpeta queda bloqueada y sin cambios. Después cada archivo pasa a su
+    /// sitio en lugar de su marcador.
+    /// </summary>
+    /// <param name="extracted">
+    /// Se llama con la carpeta del contenido descifrado antes de colocarlo. El agente la usa para
+    /// entregar los archivos que algún programa está esperando y desconectarse de la carpeta.
+    /// </param>
+    public static void Unlock(string folder, KeyMaterial key, IProgress<ProgressInfo>? progress = null, Action<string>? extracted = null)
     {
         var vault = Path.Combine(folder, VaultFileName);
-        var created = new List<string>();
+        var staging = Path.Combine(folder, StagingDirName);
         ArchiveEntry root;
 
-        using (var fs = new FileStream(vault, FileMode.Open, FileAccess.Read, FileShare.Read, 1, FileOptions.SequentialScan))
+        DeleteTree(staging);
+        try
         {
+            var dir = Directory.CreateDirectory(staging);
+            dir.Attributes |= FileAttributes.Hidden | FileAttributes.System;
+            using var fs = new FileStream(vault, FileMode.Open, FileAccess.Read, FileShare.Read, 1, FileOptions.SequentialScan);
             var header = VaultFile.ReadHeader(fs);
             using var dec = VaultFile.OpenRead(fs, header, key);
-            bool hadIni = RemoveDesktopIni(folder);
-            try
-            {
-                root = FolderArchive.Extract(dec, folder, new ProgressTracker(progress, fs.Length), created);
-            }
-            catch
-            {
-                Rollback(created);
-                if (hadIni)
-                    WriteDesktopIni(folder, VaultHasContent(folder));
-                throw;
-            }
+            root = FolderArchive.Extract(dec, staging, new ProgressTracker(progress, fs.Length), []);
+        }
+        catch
+        {
+            TryDeleteTree(staging);
+            throw;
         }
 
+        extracted?.Invoke(staging);
+        RemoveDesktopIni(folder);
+        bool syncRoot = CloudFiles.IsSyncRoot(folder);
+        MoveIntoPlace(staging, folder);
+        if (syncRoot)
+        {
+            RemoveLeftoverPlaceholders(folder);
+            CloudFiles.Unregister(folder);
+        }
         File.Delete(vault);
+        DeleteTree(staging);
         File.SetAttributes(folder, FolderArchive.Restorable(root.Attributes));
         ShellNotify.ItemChanged(folder);
+    }
+
+    /// <summary>Coloca el contenido descifrado en la carpeta, sustituyendo los marcadores.</summary>
+    static void MoveIntoPlace(string staging, string folder)
+    {
+        var dirs = new List<(string Path, FileAttributes Attributes, DateTime Created, DateTime Written)>();
+        void Walk(DirectoryInfo source, string target)
+        {
+            foreach (var item in source.EnumerateFileSystemInfos("*", new EnumerationOptions { AttributesToSkip = 0 }))
+            {
+                var destination = Path.Combine(target, item.Name);
+                if (item is DirectoryInfo sub)
+                {
+                    if (File.Exists(destination))
+                        destination = UniquePath(destination);
+                    // Las fechas se toman antes de vaciarla, que las cambia.
+                    dirs.Add((destination, sub.Attributes, sub.CreationTimeUtc, sub.LastWriteTimeUtc));
+                    Directory.CreateDirectory(destination);
+                    Walk(sub, destination);
+                }
+                else
+                {
+                    MoveFileIntoPlace(item.FullName, destination);
+                }
+            }
+        }
+        Walk(new DirectoryInfo(staging), folder);
+        for (int i = dirs.Count - 1; i >= 0; i--)
+        {
+            var (path, attributes, created, written) = dirs[i];
+            Directory.SetCreationTimeUtc(path, created);
+            Directory.SetLastWriteTimeUtc(path, written);
+            File.SetAttributes(path, FolderArchive.Restorable(attributes));
+        }
+    }
+
+    static void MoveFileIntoPlace(string source, string destination)
+    {
+        if (Directory.Exists(destination))
+        {
+            destination = UniquePath(destination);
+        }
+        else if (File.Exists(destination))
+        {
+            switch (CloudFiles.GetState(destination))
+            {
+                case PlaceholderState.Dehydrated:
+                    DeleteFile(destination);
+                    break;
+                case PlaceholderState.Hydrated when CloudFiles.TryRevert(destination, isDirectory: false):
+                    // Un programa ya recibió este contenido (o estaba abierto al bloquear): es el mismo archivo.
+                    DeleteFile(source);
+                    return;
+                default:
+                    // Un archivo creado mientras la carpeta estaba bloqueada: se conservan los dos.
+                    destination = UniquePath(destination);
+                    break;
+            }
+        }
+        File.Move(source, destination);
+    }
+
+    /// <summary>
+    /// Marcadores que no corresponden a nada del archivo cifrado (p. ej. se renombraron mientras la
+    /// carpeta estaba bloqueada): su contenido ya está en su sitio con el nombre original.
+    /// </summary>
+    static void RemoveLeftoverPlaceholders(string folder)
+    {
+        var options = new EnumerationOptions { AttributesToSkip = 0, RecurseSubdirectories = true };
+        foreach (var path in Directory.EnumerateFiles(folder, "*", options))
+        {
+            try
+            {
+                switch (CloudFiles.GetState(path))
+                {
+                    case PlaceholderState.Dehydrated:
+                        DeleteFile(path);
+                        break;
+                    case PlaceholderState.Hydrated:
+                        CloudFiles.TryRevert(path, isDirectory: false);
+                        break;
+                }
+            }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+            {
+            }
+        }
     }
 
     static List<string> DeleteOriginals(FolderScan scan)
@@ -168,27 +334,6 @@ internal static class FolderLocker
             }
         }
         return failed;
-    }
-
-    static void Rollback(List<string> created)
-    {
-        for (int i = created.Count - 1; i >= 0; i--)
-        {
-            try
-            {
-                if (File.Exists(created[i]))
-                    DeleteFile(created[i]);
-                else if (Directory.Exists(created[i]))
-                {
-                    File.SetAttributes(created[i], FileAttributes.Normal);
-                    Directory.Delete(created[i], recursive: false);
-                }
-            }
-            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
-            {
-                // Lo que no se pueda borrar se queda; la bóveda sigue intacta.
-            }
-        }
     }
 
     /// <summary>
@@ -313,6 +458,41 @@ internal static class FolderLocker
             return;
         File.SetAttributes(path, FileAttributes.Normal);
         File.Delete(path);
+    }
+
+    static string UniquePath(string path)
+    {
+        var dir = Path.GetDirectoryName(path)!;
+        var name = Path.GetFileNameWithoutExtension(path);
+        var ext = Path.GetExtension(path);
+        for (int i = 2; ; i++)
+        {
+            var candidate = Path.Combine(dir, $"{name} ({i}){ext}");
+            if (!File.Exists(candidate) && !Directory.Exists(candidate))
+                return candidate;
+        }
+    }
+
+    static void DeleteTree(string path)
+    {
+        if (!Directory.Exists(path))
+            return;
+        var options = new EnumerationOptions { AttributesToSkip = 0, RecurseSubdirectories = true };
+        foreach (var e in new DirectoryInfo(path).EnumerateFileSystemInfos("*", options))
+            e.Attributes = e is DirectoryInfo ? FileAttributes.Directory : FileAttributes.Normal;
+        new DirectoryInfo(path).Attributes = FileAttributes.Directory;
+        Directory.Delete(path, recursive: true);
+    }
+
+    static void TryDeleteTree(string path)
+    {
+        try
+        {
+            DeleteTree(path);
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+        }
     }
 
     static void TryDeleteFile(string path)
