@@ -510,15 +510,57 @@ public:
         default: return SHStrDupW(L"Proteger con contraseña", name);
         }
     }
-    IFACEMETHODIMP GetIcon(IShellItemArray*, LPWSTR* icon) override
+    // Icono de la acción (ver AppIcons): escudo para proteger, candado cerrado para bloquear y abierto para
+    // desbloquear. Si no se encuentra, el de DoorMan.exe (también un candado cerrado).
+    IFACEMETHODIMP GetIcon(IShellItemArray* items, LPWSTR* icon) override
     {
         if (!icon)
             return E_POINTER;
         *icon = nullptr;
+        FolderAction action = FolderAction::Protect;
+        std::wstring path;
+        ActionFor(items, action, path);
+        const wchar_t* name = action == FolderAction::Unlock ? L"lock_open.ico"
+            : action == FolderAction::Lock ? L"lock_closed.ico"
+            : L"shield_lock.ico";
+        std::wstring file = FindIconFile(name);
+        if (!file.empty())
+            return SHStrDupW((file + L",0").c_str(), icon);
         wchar_t exe[MAX_PATH];
         if (!GetModuleFileNameW(g_module, exe, MAX_PATH) || !PathRemoveFileSpecW(exe) || !PathAppendW(exe, ExeFileName))
             return E_FAIL;
         return SHStrDupW((std::wstring(exe) + L",0").c_str(), icon);
+    }
+
+    // El instalador copia los iconos a «iconos\<huella>» (la ruta cambia con cada versión para que el
+    // Explorador no use su caché): se elige la subcarpeta más reciente que contenga el icono.
+    static std::wstring FindIconFile(const wchar_t* name)
+    {
+        wchar_t root[MAX_PATH];
+        if (!GetModuleFileNameW(g_module, root, MAX_PATH) || !PathRemoveFileSpecW(root) || !PathAppendW(root, L"iconos"))
+            return {};
+        std::wstring pattern = std::wstring(root) + L"\\*";
+        WIN32_FIND_DATAW entry;
+        HANDLE find = FindFirstFileW(pattern.c_str(), &entry);
+        if (find == INVALID_HANDLE_VALUE)
+            return {};
+        std::wstring best;
+        FILETIME bestTime = {};
+        do
+        {
+            if (!(entry.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) || entry.cFileName[0] == L'.')
+                continue;
+            std::wstring candidate = std::wstring(root) + L"\\" + entry.cFileName + L"\\" + name;
+            if (GetFileAttributesW(candidate.c_str()) == INVALID_FILE_ATTRIBUTES)
+                continue;
+            if (best.empty() || CompareFileTime(&entry.ftLastWriteTime, &bestTime) > 0)
+            {
+                best = candidate;
+                bestTime = entry.ftLastWriteTime;
+            }
+        } while (FindNextFileW(find, &entry));
+        FindClose(find);
+        return best;
     }
     IFACEMETHODIMP GetToolTip(IShellItemArray*, LPWSTR* tip) override
     {

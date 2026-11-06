@@ -74,8 +74,9 @@ Requires the .NET 10 SDK, the Visual Studio C++ build tools and the Windows SDK 
 
 ```powershell
 dotnet test tests\DoorMan.Tests   # unit tests
-.\publicar.ps1                    # icons, native extension and publish\DoorMan.exe
 ```
+
+The build and packaging scripts (icons, native extension, signed MSIX) are kept out of this repository.
 
 Command-line arguments: `--proteger`, `--abrir`, `--rebloquear` + folder path; `--instalar`, `--desinstalar`,
 `--registrar`, `--desregistrar`, `--inicio`, `--agente`.

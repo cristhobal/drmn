@@ -4,7 +4,9 @@ namespace DoorMan;
 /// Iconos instalados junto al ejecutable en «iconos»: carpeta bloqueada vacía (folder_locked) o con
 /// contenido (filled_locked). Hay dos estilos, como las carpetas del sistema: el de Windows 11 (sin
 /// prefijo, el predeterminado) y el de Windows 10 (win10_*), que también usa Windows Server. Las
-/// desbloqueadas usan el icono normal de Windows. Si faltan, se usa el candado de shell32.dll.
+/// desbloqueadas usan el icono normal de Windows. La aplicación y las opciones del menú usan iconos
+/// propios de la acción (lock_closed, lock_open, shield_lock; ver herramientas\dibujar-candados.ps1).
+/// Si faltan, se usa el candado de shell32.dll.
 /// </summary>
 internal static class AppIcons
 {
@@ -46,14 +48,30 @@ internal static class AppIcons
         return $"{file},{index}";
     }
 
-    /// <summary>Icono de la aplicación y de sus opciones en el menú contextual.</summary>
-    public static string LockResource => LockedFolderIconResource(hasContent: true);
+    /// <summary>
+    /// Icono de la aplicación (un candado cerrado): ventanas, avisos y el archivo cifrado. Solo las
+    /// carpetas llevan iconos de carpeta.
+    /// </summary>
+    public static string LockResource => IconResource(AppIconFile);
+
+    /// <summary>Icono de cada opción del menú contextual, representativo de la acción.</summary>
+    public static string ProtectResource => IconResource("shield_lock.ico");
+    public static string RelockResource => IconResource("lock_closed.ico");
+    public static string UnlockResource => IconResource("lock_open.ico");
+
+    const string AppIconFile = "lock_closed.ico";
+
+    static string IconResource(string name)
+    {
+        var file = IconFile(name);
+        return File.Exists(file) ? $"{file},0" : $"{Path.Combine(Environment.SystemDirectory, "shell32.dll")},{Shell32LockIndex}";
+    }
 
     public static Icon Lock => _lock ??= LoadLock();
 
     static Icon LoadLock()
     {
-        var file = IconFile("filled_locked.ico");
+        var file = IconFile(AppIconFile);
         if (File.Exists(file))
             return new Icon(file);
         return Icon.ExtractIcon(Path.Combine(Environment.SystemDirectory, "shell32.dll"), Shell32LockIndex, 32) ?? SystemIcons.Shield;

@@ -81,7 +81,7 @@ internal static class ShellIntegration
     public static void Register()
     {
         if (!UsesPackagedMenu)
-            WriteVerb(ProtectVerb, "Proteger con contraseña", "--proteger", appliesTo: null);
+            WriteVerb(ProtectVerb, "Proteger con contraseña", "--proteger", AppIcons.ProtectResource, appliesTo: null);
 
         using (var ext = Registry.CurrentUser.CreateSubKey($@"Software\Classes\{FolderLocker.VaultExtension}"))
             ext.SetValue("", ProgId);
@@ -145,16 +145,16 @@ internal static class ShellIntegration
         if (packaged)
             Registry.CurrentUser.DeleteSubKeyTree($@"{DirectoryShell}\{ProtectVerb}", throwOnMissingSubKey: false);
         else if (IsRegistered)
-            WriteVerb(ProtectVerb, "Proteger con contraseña", "--proteger",
+            WriteVerb(ProtectVerb, "Proteger con contraseña", "--proteger", AppIcons.ProtectResource,
                 folders.Count > 0 ? AppliesToAllExcept(folders.Select(f => f.Path)) : null);
 
         if (unlocked.Count > 0 && !packaged)
-            WriteVerb(RelockVerb, "Bloquear", "--rebloquear", AppliesToAny(unlocked));
+            WriteVerb(RelockVerb, "Bloquear", "--rebloquear", AppIcons.RelockResource, AppliesToAny(unlocked));
         else
             Registry.CurrentUser.DeleteSubKeyTree($@"{DirectoryShell}\{RelockVerb}", throwOnMissingSubKey: false);
 
         if (locked.Count > 0)
-            WriteVerb(OpenVerb, "Desbloquear", "--abrir", AppliesToAny(locked));
+            WriteVerb(OpenVerb, "Desbloquear", "--abrir", AppIcons.UnlockResource, AppliesToAny(locked));
         else
             Registry.CurrentUser.DeleteSubKeyTree($@"{DirectoryShell}\{OpenVerb}", throwOnMissingSubKey: false);
     }
@@ -181,11 +181,11 @@ internal static class ShellIntegration
     static string UnlockedListPath => Path.Combine(
         Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "DoorMan", "desbloqueadas.txt");
 
-    static void WriteVerb(string verb, string text, string argument, string? appliesTo)
+    static void WriteVerb(string verb, string text, string argument, string icon, string? appliesTo)
     {
         using var key = Registry.CurrentUser.CreateSubKey($@"{DirectoryShell}\{verb}");
         key.SetValue("MUIVerb", text);
-        key.SetValue("Icon", LockIcon);
+        key.SetValue("Icon", icon);
         if (appliesTo is null)
             key.DeleteValue("AppliesTo", throwOnMissingValue: false);
         else

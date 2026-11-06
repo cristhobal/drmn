@@ -16,7 +16,7 @@
     <Version>2.0.0</Version>
     <NeutralLanguage>es-ES</NeutralLanguage>
     <ShellExtension>..\..\native\DoorManShell\bin\DoorManShell.dll</ShellExtension>
-    <ApplicationIcon>..\..\icons\generados\filled_locked.ico</ApplicationIcon>
+    <ApplicationIcon>..\..\icons\generados\lock_closed.ico</ApplicationIcon>
     <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
     <!--
       Los archivos marcadores (API Cloud Files) necesitan Windows 10 1709 o posterior. No se sube la
