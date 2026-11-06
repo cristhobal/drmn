@@ -1,6 +1,6 @@
-﻿# Genera icons\generados\*.ico con todos los tamaños que usa Windows a partir de los originales de
-# icons\ (que solo traen 256×256). Sin los tamaños pequeños, el Explorador reduce la imagen grande
-# sobre la marcha y se ve pixelada.
+﻿# Genera icons\generados\*.ico con todos los tamaños que usa Windows a partir de los PNG originales
+# de icons\ (en alta resolución, 1024 px o más). Sin los tamaños pequeños, el Explorador reduce la
+# imagen grande sobre la marcha y se ve pixelada.
 #
 # Cada tamaño se obtiene reduciendo a la mitad de forma progresiva con bicúbica de alta calidad,
 # que conserva mucho mejor los bordes finos que una única reducción de 256 a 16.
@@ -100,19 +100,25 @@ function Scale([System.Drawing.Bitmap]$original, [int]$size) {
     return $current
 }
 
-function Read-LargestImage([string]$path) {
-    $bytes = [IO.File]::ReadAllBytes($path)
-    $count = [BitConverter]::ToUInt16($bytes, 4)
-    $best = 0..($count - 1) | Sort-Object { $w = $bytes[6 + 16 * $_]; if ($w -eq 0) { 256 } else { $w } } -Descending | Select-Object -First 1
-    $offset = [BitConverter]::ToUInt32($bytes, 6 + 16 * $best + 12)
-    $length = [BitConverter]::ToUInt32($bytes, 6 + 16 * $best + 8)
-    $stream = New-Object IO.MemoryStream (, $bytes[$offset..($offset + $length - 1)])
-    return New-Object System.Drawing.Bitmap $stream
+function Read-Source([string]$path) {
+    # Se copia a un Bitmap propio en 32 bpp ARGB para no dejar el archivo bloqueado.
+    $loaded = [System.Drawing.Image]::FromFile($path)
+    try {
+        if ($loaded.Width -ne $loaded.Height) { throw "$path no es cuadrado ($($loaded.Width)x$($loaded.Height))" }
+        if ($loaded.Width -lt 256) { throw "$path mide $($loaded.Width) px; hacen falta al menos 256" }
+        $bitmap = New-Object System.Drawing.Bitmap $loaded.Width, $loaded.Height, ([System.Drawing.Imaging.PixelFormat]::Format32bppArgb)
+        $g = [System.Drawing.Graphics]::FromImage($bitmap)
+        $g.CompositingMode = [System.Drawing.Drawing2D.CompositingMode]::SourceCopy
+        $g.DrawImage($loaded, 0, 0, $loaded.Width, $loaded.Height)
+        $g.Dispose()
+        return $bitmap
+    } finally { $loaded.Dispose() }
 }
 
 New-Item -ItemType Directory -Force $target | Out-Null
-foreach ($file in Get-ChildItem $source -Filter *.ico) {
-    $original = Read-LargestImage $file.FullName
+foreach ($file in Get-ChildItem $source -Filter *.png) {
+    $original = Read-Source $file.FullName
+    $sourceSize = $original.Width
     $images = foreach ($size in $sizes) {
         $bitmap = Scale $original $size
         $png = New-Object IO.MemoryStream
@@ -136,6 +142,6 @@ foreach ($file in Get-ChildItem $source -Filter *.ico) {
     }
     foreach ($image in $images) { $w.Write($image[1]) }
     $w.Flush()
-    [IO.File]::WriteAllBytes((Join-Path $target $file.Name), $out.ToArray())
-    "{0}: {1} tamaños" -f $file.Name, $images.Count
+    [IO.File]::WriteAllBytes((Join-Path $target ($file.BaseName + ".ico")), $out.ToArray())
+    "{0}.ico: {1} tamaños (origen {2} px)" -f $file.BaseName, $images.Count, $sourceSize
 }
