@@ -108,7 +108,7 @@ internal static class AppState
             if (locked)
                 FolderLocker.RefreshLockedAppearance(folder);
             else if (unlocked)
-                FolderLocker.ApplyUnlockedAppearance(folder); // vacía o con contenido puede haber cambiado
+                FolderLocker.RemoveUnlockedAppearance(folder); // icono normal de Windows (las versiones anteriores ponían uno propio)
             if (locked || unlocked)
             {
                 result.Add(new ProtectedFolder(folder, locked));

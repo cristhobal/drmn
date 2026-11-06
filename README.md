@@ -18,8 +18,8 @@ for the password *before* anything inside can be seen or opened, whether from Ex
 5. When you are done, right-click the folder → **Bloquear** (Lock). It is locked again with the same password.
 
 The context menu adapts to each folder: unprotected folders show **Proteger con contraseña**, locked folders show
-**Desbloquear** (Unlock) and unlocked ones show **Bloquear** (Lock). Folder icons show whether a folder is locked or
-unlocked, and empty or not. Errors are reported with a native Windows notification.
+**Desbloquear** (Unlock) and unlocked ones show **Bloquear** (Lock). Locked folders show a padlock icon (empty or with
+content); unlocked folders keep the normal Windows folder icon. Errors are reported with a native Windows notification.
 
 ## How it works
 

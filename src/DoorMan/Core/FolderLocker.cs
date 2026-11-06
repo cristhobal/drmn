@@ -34,13 +34,6 @@ internal static class FolderLocker
 
     public static bool IsLocked(string folder) => File.Exists(Path.Combine(folder, VaultFileName));
 
-    /// <summary>¿Es uno de los archivos que DoorMan crea dentro de la carpeta (no contenido del usuario)?</summary>
-    public static bool IsOwnEntry(string name) =>
-        name.Equals(DesktopIni, StringComparison.OrdinalIgnoreCase)
-        || name.Equals(VaultFileName, StringComparison.OrdinalIgnoreCase)
-        || name.Equals(TempFileName, StringComparison.OrdinalIgnoreCase)
-        || name.Equals(StagingDirName, StringComparison.OrdinalIgnoreCase);
-
     /// <summary>
     /// Cifra el contenido de la carpeta. El archivo cifrado se escribe y se verifica por completo
     /// antes de borrar nada; si algo falla antes de ese punto, la carpeta queda intacta.
@@ -358,7 +351,7 @@ internal static class FolderLocker
             bool hasContent = VaultHasContent(folder);
             if (File.Exists(path) && File.ReadAllText(path) is var text && text.Contains(DesktopIniMarker)
                 && (!text.Contains($"CLSID={ShellIntegration.LockedClsid(hasContent)}")
-                    || !text.Contains($"IconResource={AppIcons.FolderIconResource(locked: true, hasContent)}")))
+                    || !text.Contains($"IconResource={AppIcons.LockedFolderIconResource(hasContent)}")))
                 WriteDesktopIni(folder, hasContent);
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
@@ -367,58 +360,32 @@ internal static class FolderLocker
     }
 
     /// <summary>
-    /// Icono de carpeta desbloqueada (vacía o con contenido) para las carpetas gestionadas que están
-    /// abiertas. No se toca la carpeta si ya tenía su propio desktop.ini.
+    /// Deja la carpeta con el icono normal de Windows. Las versiones anteriores ponían un icono propio
+    /// a las carpetas desbloqueadas: se quita antes de bloquear, al dejar de gestionarla y al
+    /// sincronizar. Solo se toca un desktop.ini escrito por DoorMan.
     /// </summary>
-    public static void ApplyUnlockedAppearance(string folder)
+    public static void RemoveUnlockedAppearance(string folder)
     {
-        if (!Directory.Exists(folder) || IsLocked(folder))
-            return;
         var path = Path.Combine(folder, DesktopIni);
         try
         {
-            var existing = File.Exists(path) ? File.ReadAllText(path) : null;
-            if (existing is not null && !existing.Contains(UnlockedMarker))
+            if (!File.Exists(path))
                 return;
-            bool hasContent = Directory.EnumerateFileSystemEntries(folder).Any(p => !IsOwnEntry(Path.GetFileName(p)));
-            // Windows solo usa desktop.ini si la carpeta es de solo lectura; se recuerda si lo pusimos nosotros.
-            bool readOnlyAdded = existing?.Contains(ReadOnlyAddedMarker)
-                ?? !new DirectoryInfo(folder).Attributes.HasFlag(FileAttributes.ReadOnly);
-            var icon = AppIcons.FolderIcon(locked: false, hasContent);
-            if (existing is not null && existing.Contains($"IconResource={icon.File},{icon.Index}"))
+            var text = File.ReadAllText(path);
+            if (!text.Contains(UnlockedMarker))
                 return;
-            var content =
-                "[.ShellClassInfo]\r\n" +
-                UnlockedMarker + "\r\n" +
-                (readOnlyAdded ? ReadOnlyAddedMarker + "\r\n" : "");
+            ShellNotify.ClearFolderIcon(folder);
             DeleteFile(path);
-            File.WriteAllText(path, content, Encoding.Unicode);
-            File.SetAttributes(path, FileAttributes.Hidden | FileAttributes.System);
-            var dir = new DirectoryInfo(folder);
-            dir.Attributes |= FileAttributes.ReadOnly;
-            ShellNotify.SetFolderIcon(folder, icon, UnlockedInfoTip);
+            if (text.Contains(ReadOnlyAddedMarker))
+            {
+                var dir = new DirectoryInfo(folder);
+                dir.Attributes &= ~FileAttributes.ReadOnly;
+            }
+            ShellNotify.ItemChanged(folder);
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
         {
         }
-    }
-
-    /// <summary>Quita el icono de carpeta desbloqueada (antes de bloquear o al dejar de gestionarla).</summary>
-    public static void RemoveUnlockedAppearance(string folder)
-    {
-        var path = Path.Combine(folder, DesktopIni);
-        if (!File.Exists(path))
-            return;
-        var text = File.ReadAllText(path);
-        if (!text.Contains(UnlockedMarker))
-            return;
-        DeleteFile(path);
-        if (text.Contains(ReadOnlyAddedMarker))
-        {
-            var dir = new DirectoryInfo(folder);
-            dir.Attributes &= ~FileAttributes.ReadOnly;
-        }
-        ShellNotify.ItemChanged(folder);
     }
 
     /// <summary>¿Tenía la carpeta algo dentro cuando se bloqueó? Se deduce del tamaño del archivo cifrado.</summary>
@@ -429,7 +396,6 @@ internal static class FolderLocker
     }
 
     const string LockedInfoTip = "Carpeta protegida con contraseña.";
-    const string UnlockedInfoTip = "Carpeta protegida con contraseña (desbloqueada).";
 
     /// <summary>
     /// desktop.ini de una carpeta bloqueada. El CLSID hace que el Explorador la abra a través de la
@@ -446,7 +412,7 @@ internal static class FolderLocker
             DesktopIniMarker + "\r\n",
             Encoding.Unicode);
         File.SetAttributes(path, FileAttributes.Hidden | FileAttributes.System);
-        ShellNotify.SetFolderIcon(folder, AppIcons.FolderIcon(locked: true, hasContent), LockedInfoTip);
+        ShellNotify.SetFolderIcon(folder, AppIcons.LockedFolderIcon(hasContent), LockedInfoTip);
     }
 
     static bool RemoveDesktopIni(string folder)
@@ -454,6 +420,8 @@ internal static class FolderLocker
         var path = Path.Combine(folder, DesktopIni);
         if (!File.Exists(path) || !File.ReadAllText(path).Contains(DesktopIniMarker))
             return false;
+        // Desbloqueada vuelve al icono normal de Windows; sin esto el Explorador mostraría el de la caché.
+        ShellNotify.ClearFolderIcon(folder);
         DeleteFile(path);
         return true;
     }

@@ -79,7 +79,7 @@ internal static class ShellIntegration
                 using var clsid = Registry.CurrentUser.CreateSubKey(ClsidKey(hasContent));
                 clsid.SetValue("", "DoorMan");
                 using (var icon = clsid.CreateSubKey("DefaultIcon"))
-                    icon.SetValue("", AppIcons.FolderIconResource(locked: true, hasContent));
+                    icon.SetValue("", AppIcons.LockedFolderIconResource(hasContent));
                 using var server = clsid.CreateSubKey("InProcServer32");
                 server.SetValue("", extension);
                 server.SetValue("ThreadingModel", "Apartment");
@@ -211,6 +211,23 @@ internal static class ShellNotify
             pszIconFile = icon.File,
             iIconIndex = icon.Index,
             pszInfoTip = infoTip,
+        };
+        SHGetSetFolderCustomSettings(ref settings, folder, FCS_FORCEWRITE);
+        ItemChanged(folder);
+    }
+
+    /// <summary>
+    /// Quita el icono y la descripción personalizados con la función del shell, para que el
+    /// Explorador olvide el que tenía en caché y vuelva a mostrar el icono normal de Windows.
+    /// </summary>
+    public static void ClearFolderIcon(string folder)
+    {
+        var settings = new SHFOLDERCUSTOMSETTINGS
+        {
+            dwSize = (uint)Marshal.SizeOf<SHFOLDERCUSTOMSETTINGS>(),
+            dwMask = FCSM_ICONFILE | FCSM_INFOTIP,
+            pszIconFile = null,
+            pszInfoTip = null,
         };
         SHGetSetFolderCustomSettings(ref settings, folder, FCS_FORCEWRITE);
         ItemChanged(folder);

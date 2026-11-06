@@ -7,6 +7,8 @@ $ErrorActionPreference = "Stop"
 $dotnet = @((Get-Command dotnet -ErrorAction SilentlyContinue).Source, "$env:LOCALAPPDATA\Microsoft\dotnet\dotnet.exe") |
     Where-Object { $_ -and (Test-Path $_) -and (& $_ --list-sdks 2>$null) } | Select-Object -First 1
 if (-not $dotnet) { throw "No se encontró ningún SDK de .NET." }
+# La publicación no borra lo que ya había: sin esto quedarían iconos que ya no existen.
+Remove-Item "$PSScriptRoot\publish\iconos" -Recurse -Force -ErrorAction SilentlyContinue
 & $dotnet publish "$PSScriptRoot\src\DoorMan" -c Release -r win-x64 --self-contained `
     -p:PublishSingleFile=true -p:IncludeNativeLibrariesForSelfExtract=true `
     -p:EnableCompressionInSingleFile=true -p:DebugType=none -o "$PSScriptRoot\publish"

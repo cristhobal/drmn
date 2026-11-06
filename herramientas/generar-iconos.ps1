@@ -2,6 +2,9 @@
 # de icons\ (en alta resolución, 1024 px o más). Sin los tamaños pequeños, el Explorador reduce la
 # imagen grande sobre la marcha y se ve pixelada.
 #
+# folder_locked / filled_locked son los de Windows 11; los win10_* imitan las carpetas de Windows 10
+# (la aplicación elige según el sistema, ver AppIcons).
+#
 # Cada tamaño se obtiene reduciendo a la mitad de forma progresiva con bicúbica de alta calidad,
 # que conserva mucho mejor los bordes finos que una única reducción de 256 a 16.
 $ErrorActionPreference = "Stop"
@@ -116,6 +119,8 @@ function Read-Source([string]$path) {
 }
 
 New-Item -ItemType Directory -Force $target | Out-Null
+# Sin restos de iconos cuyo PNG ya no existe: se instalan todos los .ico de esta carpeta.
+Get-ChildItem $target -Filter *.ico | Remove-Item
 foreach ($file in Get-ChildItem $source -Filter *.png) {
     $original = Read-Source $file.FullName
     $sourceSize = $original.Width

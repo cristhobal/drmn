@@ -31,7 +31,7 @@
   </ItemGroup>
 
   <!--
-    Iconos de carpeta (bloqueada/desbloqueada, vacía/con contenido): se instalan en «iconos».
+    Iconos de carpeta bloqueada (vacía/con contenido, estilo Windows 11 y win10_*): se instalan en «iconos».
     Son los de icons\generados (herramientas\generar-iconos.ps1), con todos los tamaños que usa Windows.
   -->
   <ItemGroup>
