@@ -1,5 +1,6 @@
-﻿# Genera publish\DoorMan.exe (no necesita .NET instalado) y publish\DoorManShell.dll,
-# la extensión del Explorador que pide la contraseña antes de abrir una carpeta bloqueada.
+﻿# Genera publish\DoorMan.exe (no necesita .NET instalado), publish\DoorManShell.dll, la extensión del
+# Explorador que pide la contraseña antes de abrir una carpeta bloqueada, y el paquete DoorMan.msix (con su
+# certificado DoorMan.cer) que lleva la opción de DoorMan al menú contextual moderno de Windows 11.
 $ErrorActionPreference = "Stop"
 & "$PSScriptRoot\herramientas\generar-iconos.ps1"
 & "$PSScriptRoot\native\DoorManShell\build.ps1"
@@ -13,3 +14,5 @@ Remove-Item "$PSScriptRoot\publish\iconos" -Recurse -Force -ErrorAction Silently
     -p:PublishSingleFile=true -p:IncludeNativeLibrariesForSelfExtract=true `
     -p:EnableCompressionInSingleFile=true -p:DebugType=none -o "$PSScriptRoot\publish"
 if ($LASTEXITCODE -ne 0) { throw "La publicación ha fallado." }
+# Paquete firmado para el menú contextual moderno de Windows 11 (publish\DoorMan.msix y DoorMan.cer).
+& "$PSScriptRoot\herramientas\generar-paquete.ps1" -Output "$PSScriptRoot\publish"

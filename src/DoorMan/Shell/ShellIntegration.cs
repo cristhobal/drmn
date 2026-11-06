@@ -49,14 +49,39 @@ internal static class ShellIntegration
     {
         get
         {
-            using var key = Registry.CurrentUser.OpenSubKey($@"{DirectoryShell}\{ProtectVerb}\command");
+            using var key = Registry.CurrentUser.OpenSubKey($@"Software\Classes\{ProgId}\shell\open\command");
             return key is not null;
+        }
+    }
+
+    const string SettingsKey = @"Software\DoorMan";
+    const string PackagedMenuValue = "MenuWindows11";
+
+    /// <summary>
+    /// Si el paquete del menú de Windows 11 está instalado (ContextMenuPackage), su comando aparece en los dos
+    /// menús, el moderno y «Mostrar más opciones»: las opciones del registro saldrían repetidas (ver Refresh).
+    /// </summary>
+    public static bool UsesPackagedMenu
+    {
+        get
+        {
+            using var key = Registry.CurrentUser.OpenSubKey(SettingsKey);
+            return key?.GetValue(PackagedMenuValue) is 1;
+        }
+        set
+        {
+            using var key = Registry.CurrentUser.CreateSubKey(SettingsKey);
+            if (value)
+                key.SetValue(PackagedMenuValue, 1, RegistryValueKind.DWord);
+            else
+                key.DeleteValue(PackagedMenuValue, throwOnMissingValue: false);
         }
     }
 
     public static void Register()
     {
-        WriteVerb(ProtectVerb, "Proteger con contraseña", "--proteger", appliesTo: null);
+        if (!UsesPackagedMenu)
+            WriteVerb(ProtectVerb, "Proteger con contraseña", "--proteger", appliesTo: null);
 
         using (var ext = Registry.CurrentUser.CreateSubKey($@"Software\Classes\{FolderLocker.VaultExtension}"))
             ext.SetValue("", ProgId);
@@ -111,12 +136,19 @@ internal static class ShellIntegration
             folders = [];
         var locked = folders.Where(f => f.Locked).Select(f => f.Path).ToList();
         var unlocked = folders.Where(f => !f.Locked).Select(f => f.Path).ToList();
+        WriteUnlockedList(unlocked);
 
-        if (IsRegistered)
+        // Con el paquete, «Proteger» y «Bloquear» los da su comando. Las carpetas bloqueadas son la excepción:
+        // su desktop.ini las asocia a la extensión de DoorMan y Windows no les muestra ningún comando de
+        // paquete, así que «Desbloquear» sigue en el registro (en «Mostrar más opciones», sin repetirse).
+        var packaged = UsesPackagedMenu;
+        if (packaged)
+            Registry.CurrentUser.DeleteSubKeyTree($@"{DirectoryShell}\{ProtectVerb}", throwOnMissingSubKey: false);
+        else if (IsRegistered)
             WriteVerb(ProtectVerb, "Proteger con contraseña", "--proteger",
                 folders.Count > 0 ? AppliesToAllExcept(folders.Select(f => f.Path)) : null);
 
-        if (unlocked.Count > 0)
+        if (unlocked.Count > 0 && !packaged)
             WriteVerb(RelockVerb, "Bloquear", "--rebloquear", AppliesToAny(unlocked));
         else
             Registry.CurrentUser.DeleteSubKeyTree($@"{DirectoryShell}\{RelockVerb}", throwOnMissingSubKey: false);
@@ -126,6 +158,28 @@ internal static class ShellIntegration
         else
             Registry.CurrentUser.DeleteSubKeyTree($@"{DirectoryShell}\{OpenVerb}", throwOnMissingSubKey: false);
     }
+
+    /// <summary>
+    /// El menú contextual de Windows 11 (MenuCommand, en DoorManShell.dll) reconoce las carpetas bloqueadas por
+    /// su archivo cifrado; las desbloqueadas, por esta lista (una ruta por línea, UTF-8).
+    /// </summary>
+    static void WriteUnlockedList(IEnumerable<string> unlocked)
+    {
+        try
+        {
+            Directory.CreateDirectory(Path.GetDirectoryName(UnlockedListPath)!);
+            var tmp = UnlockedListPath + ".tmp";
+            File.WriteAllLines(tmp, unlocked, new System.Text.UTF8Encoding(encoderShouldEmitUTF8Identifier: false));
+            File.Move(tmp, UnlockedListPath, overwrite: true);
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            // Solo afecta al texto del menú de Windows 11; se reescribe en el próximo cambio.
+        }
+    }
+
+    static string UnlockedListPath => Path.Combine(
+        Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "DoorMan", "desbloqueadas.txt");
 
     static void WriteVerb(string verb, string text, string argument, string? appliesTo)
     {

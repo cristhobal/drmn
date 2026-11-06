@@ -7,10 +7,10 @@ for the password *before* anything inside can be seen or opened, whether from Ex
 
 ## Usage
 
-1. Install: run `publish\DoorMan.exe --instalar`. It installs per user (no administrator rights needed) to
-   `%LOCALAPPDATA%\Programs\DoorMan` and runs silently in the background from sign-in.
-2. Right-click a folder → **Proteger con contraseña** (Protect with password). On Windows 11 the option is under
-   **Show more options**. Enter and confirm the password.
+1. Install: run `publish\DoorMan.exe --instalar`. It installs per user to `%LOCALAPPDATA%\Programs\DoorMan` and runs
+   silently in the background from sign-in. On Windows 11 it asks once for administrator rights (UAC) to trust the
+   certificate of its context menu package; if declined, the options stay under **Show more options**.
+2. Right-click a folder → **Proteger con contraseña** (Protect with password). Enter and confirm the password.
 3. Open the locked folder as usual (double-click). DoorMan asks for the password first; once it is correct, the folder
    is decrypted and Explorer goes straight into it. A wrong password lets you try again.
 4. Opening a file of a locked folder from anywhere else (recent files, an app's jump list, the command line…) also asks
@@ -20,6 +20,8 @@ for the password *before* anything inside can be seen or opened, whether from Ex
 The context menu adapts to each folder: unprotected folders show **Proteger con contraseña**, locked folders show
 **Desbloquear** (Unlock) and unlocked ones show **Bloquear** (Lock). Locked folders show a padlock icon (empty or with
 content); unlocked folders keep the normal Windows folder icon. Errors are reported with a native Windows notification.
+On Windows 11, **Desbloquear** is under **Show more options**: Windows shows no packaged commands on locked folders
+(double-clicking them asks for the password anyway).
 
 ## How it works
 
@@ -46,6 +48,12 @@ content); unlocked folders keep the normal Windows folder icon. Errors are repor
   in `%LOCALAPPDATA%\DoorMan`. It is deleted when the folder is locked again.
 - **Context menu.** Menu entries are filtered per folder with `AppliesTo` on `System.ParsingPath` (the real path, not the
   localized display path). DoorMan never changes the default double-click action of folders.
+- **Windows 11 context menu.** The modern menu only shows commands of apps with package identity, so DoorMan installs a
+  sparse package (`DoorMan.msix`, pointing to the install folder) that declares an `IExplorerCommand` from
+  `DoorManShell.dll`. It shows **Proteger con contraseña** or **Bloquear** depending on the folder (unlocked folders are
+  listed in `%LOCALAPPDATA%\DoorMan\desbloqueadas.txt`), and replaces the registry entries. Windows only installs it if
+  signed with a machine-trusted certificate: each build creates a new self-signed one, signs the package and destroys
+  the private key right away; the installer trusts the certificate (UAC) and removes those of previous builds.
 
 ## Limitations
 
@@ -62,7 +70,7 @@ content); unlocked folders keep the normal Windows folder icon. Errors are repor
 
 ## Development
 
-Requires the .NET 10 SDK and the Visual Studio C++ build tools.
+Requires the .NET 10 SDK, the Visual Studio C++ build tools and the Windows SDK (`makeappx`, `signtool`).
 
 ```powershell
 dotnet test tests\DoorMan.Tests   # unit tests

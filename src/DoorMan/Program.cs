@@ -54,6 +54,10 @@ static class Program
                     break;
                 case "--instalar":
                     return Installer.Install();
+                case "--confiar-certificado" when args.Length == 2:
+                    // Lo lanza el instalador con permisos de administrador (UAC).
+                    ContextMenuPackage.TrustCertificate(args[1]);
+                    break;
                 case "--desinstalar":
                     var locked = AppState.Sync().Count(f => f.Locked);
                     if (!Dialogs.Confirm("¿Desinstalar DoorMan?",

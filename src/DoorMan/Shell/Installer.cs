@@ -32,6 +32,9 @@ internal static class Installer
             File.Copy(current, InstalledExe, overwrite: true);
             CopyExtension(Path.GetDirectoryName(current)!);
             CopyIcons(Path.GetDirectoryName(current)!);
+            CopyPackage(Path.GetDirectoryName(current)!);
+            // La copia instalada puede pedir UAC (ContextMenuPackage): que su aviso salga delante.
+            ContextMenuPackage.AllowNextProcessForeground();
             using var child = Process.Start(InstalledExe, "--instalar")!;
             child.WaitForExit();
             return child.ExitCode;
@@ -53,6 +56,12 @@ internal static class Installer
             app.SetValue("NoRepair", 1, RegistryValueKind.DWord);
         }
         RefreshIconCache();
+        // Menú contextual moderno de Windows 11: si falla, las opciones siguen en «Mostrar más opciones».
+        // Con el paquete, las opciones del registro sobran (saldrían repetidas en «Mostrar más opciones»).
+        ShellIntegration.UsesPackagedMenu = ContextMenuPackage.Install(InstallDir, InstalledExe, out var warning);
+        AppState.Sync();
+        if (warning is not null)
+            UI.Notifications.Error("Menú contextual de Windows 11", warning);
         // El agente atiende a las carpetas bloqueadas desde ya, sin esperar al próximo inicio de sesión.
         Process.Start(new ProcessStartInfo(InstalledExe, "--agente") { UseShellExecute = false })?.Dispose();
         return 0;
@@ -65,6 +74,9 @@ internal static class Installer
         foreach (var folder in AppState.Sync().Where(f => !f.Locked))
             FolderLocker.RemoveUnlockedAppearance(folder.Path);
         ShellIntegration.Unregister();
+        // El certificado se queda en el equipo (quitarlo pediría UAC); sin su clave privada no firma nada más.
+        ContextMenuPackage.Uninstall();
+        ShellIntegration.UsesPackagedMenu = false;
         using (var run = Registry.CurrentUser.CreateSubKey(RunKey))
             run.DeleteValue(ValueName, throwOnMissingValue: false);
         Registry.CurrentUser.DeleteSubKeyTree(UninstallKey, throwOnMissingSubKey: false);
@@ -132,6 +144,16 @@ internal static class Installer
         foreach (var old in Directory.GetDirectories(root).Where(d => !PathUtil.AreSame(d, target)))
             TryDelete(() => Directory.Delete(old, recursive: true));
         Directory.SetLastWriteTimeUtc(target, DateTime.UtcNow);
+    }
+
+    static void CopyPackage(string sourceDir)
+    {
+        foreach (var name in new[] { ContextMenuPackage.PackageFileName, ContextMenuPackage.CertificateFileName })
+        {
+            var source = Path.Combine(sourceDir, name);
+            if (File.Exists(source))
+                File.Copy(source, Path.Combine(InstallDir, name), overwrite: true);
+        }
     }
 
     static void TryDelete(Action delete)

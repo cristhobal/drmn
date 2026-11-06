@@ -17,7 +17,7 @@ New-Item -ItemType Directory -Force "$PSScriptRoot\bin" | Out-Null
 Push-Location $PSScriptRoot
 try {
     # vcvars64 avisa en stderr de que no encuentra vswhere en el PATH; es inofensivo.
-    cmd /c "call `"$vcvars`" >nul 2>&1 && cl /nologo /LD /O2 /MT /W4 /WX /EHsc /std:c++17 /DUNICODE /D_UNICODE $define DoorManShell.cpp /Fobin\ /Fe`"$Output`" /link /DEF:DoorManShell.def"
+    cmd /c "call `"$vcvars`" >nul 2>&1 && cl /nologo /LD /O2 /MT /W4 /WX /EHsc /std:c++17 /utf-8 /DUNICODE /D_UNICODE $define DoorManShell.cpp /Fobin\ /Fe`"$Output`" /link /DEF:DoorManShell.def"
     if ($LASTEXITCODE -ne 0) { throw "La compilación de la extensión ha fallado." }
 } finally {
     Pop-Location
