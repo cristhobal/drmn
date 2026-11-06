@@ -34,6 +34,13 @@ internal static class FolderLocker
 
     public static bool IsLocked(string folder) => File.Exists(Path.Combine(folder, VaultFileName));
 
+    /// <summary>¿Es uno de los archivos que DoorMan crea dentro de la carpeta (no contenido del usuario)?</summary>
+    public static bool IsOwnEntry(string name) =>
+        name.Equals(DesktopIni, StringComparison.OrdinalIgnoreCase)
+        || name.Equals(VaultFileName, StringComparison.OrdinalIgnoreCase)
+        || name.Equals(TempFileName, StringComparison.OrdinalIgnoreCase)
+        || name.Equals(StagingDirName, StringComparison.OrdinalIgnoreCase);
+
     /// <summary>
     /// Cifra el contenido de la carpeta. El archivo cifrado se escribe y se verifica por completo
     /// antes de borrar nada; si algo falla antes de ese punto, la carpeta queda intacta.
@@ -350,7 +357,7 @@ internal static class FolderLocker
         {
             bool hasContent = VaultHasContent(folder);
             if (File.Exists(path) && File.ReadAllText(path) is var text && text.Contains(DesktopIniMarker)
-                && (!text.Contains($"CLSID={ShellIntegration.LockedFolderClsid}")
+                && (!text.Contains($"CLSID={ShellIntegration.LockedClsid(hasContent)}")
                     || !text.Contains($"IconResource={AppIcons.FolderIconResource(locked: true, hasContent)}")))
                 WriteDesktopIni(folder, hasContent);
         }
@@ -373,8 +380,7 @@ internal static class FolderLocker
             var existing = File.Exists(path) ? File.ReadAllText(path) : null;
             if (existing is not null && !existing.Contains(UnlockedMarker))
                 return;
-            bool hasContent = Directory.EnumerateFileSystemEntries(folder)
-                .Any(p => !string.Equals(Path.GetFileName(p), DesktopIni, StringComparison.OrdinalIgnoreCase));
+            bool hasContent = Directory.EnumerateFileSystemEntries(folder).Any(p => !IsOwnEntry(Path.GetFileName(p)));
             // Windows solo usa desktop.ini si la carpeta es de solo lectura; se recuerda si lo pusimos nosotros.
             bool readOnlyAdded = existing?.Contains(ReadOnlyAddedMarker)
                 ?? !new DirectoryInfo(folder).Attributes.HasFlag(FileAttributes.ReadOnly);
@@ -436,7 +442,7 @@ internal static class FolderLocker
         DeleteFile(path);
         File.WriteAllText(path,
             "[.ShellClassInfo]\r\n" +
-            $"CLSID={ShellIntegration.LockedFolderClsid}\r\n" +
+            $"CLSID={ShellIntegration.LockedClsid(hasContent)}\r\n" +
             DesktopIniMarker + "\r\n",
             Encoding.Unicode);
         File.SetAttributes(path, FileAttributes.Hidden | FileAttributes.System);

@@ -31,8 +31,16 @@ internal static class ShellIntegration
     /// bloqueadas la referencia, y el Explorador pide la contraseña antes de mostrar su contenido.
     /// </summary>
     public const string LockedFolderClsid = "{142BC879-C3C7-4D93-B1E6-51CF20CC661E}";
+    /// <summary>
+    /// La misma clase para las carpetas bloqueadas con contenido. En las vistas grandes el Explorador
+    /// muestra el icono registrado para la clase (DefaultIcon) y no el del desktop.ini, así que cada
+    /// icono necesita su propia clase.
+    /// </summary>
+    public const string LockedFilledFolderClsid = "{4FB75F15-2E04-47FB-8F21-40CE81A144A5}";
     public const string ExtensionFileName = "DoorManShell.dll";
-    const string ClsidKey = @"Software\Classes\CLSID\" + LockedFolderClsid;
+
+    public static string LockedClsid(bool hasContent) => hasContent ? LockedFilledFolderClsid : LockedFolderClsid;
+    static string ClsidKey(bool hasContent) => @"Software\Classes\CLSID\" + LockedClsid(hasContent);
 
     static string ExePath => Environment.ProcessPath!;
     static string LockIcon => AppIcons.LockResource;
@@ -66,13 +74,16 @@ internal static class ShellIntegration
         var extension = Path.Combine(Path.GetDirectoryName(ExePath)!, ExtensionFileName);
         if (File.Exists(extension))
         {
-            using var clsid = Registry.CurrentUser.CreateSubKey(ClsidKey);
-            clsid.SetValue("", "DoorMan");
-            using (var icon = clsid.CreateSubKey("DefaultIcon"))
-                icon.SetValue("", LockIcon);
-            using var server = clsid.CreateSubKey("InProcServer32");
-            server.SetValue("", extension);
-            server.SetValue("ThreadingModel", "Apartment");
+            foreach (var hasContent in new[] { false, true })
+            {
+                using var clsid = Registry.CurrentUser.CreateSubKey(ClsidKey(hasContent));
+                clsid.SetValue("", "DoorMan");
+                using (var icon = clsid.CreateSubKey("DefaultIcon"))
+                    icon.SetValue("", AppIcons.FolderIconResource(locked: true, hasContent));
+                using var server = clsid.CreateSubKey("InProcServer32");
+                server.SetValue("", extension);
+                server.SetValue("ThreadingModel", "Apartment");
+            }
         }
 
         AppState.Sync();
@@ -85,7 +96,8 @@ internal static class ShellIntegration
         Registry.CurrentUser.DeleteSubKeyTree($@"{DirectoryShell}\{ProtectVerb}", throwOnMissingSubKey: false);
         Registry.CurrentUser.DeleteSubKeyTree($@"Software\Classes\{FolderLocker.VaultExtension}", throwOnMissingSubKey: false);
         Registry.CurrentUser.DeleteSubKeyTree($@"Software\Classes\{ProgId}", throwOnMissingSubKey: false);
-        Registry.CurrentUser.DeleteSubKeyTree(ClsidKey, throwOnMissingSubKey: false);
+        Registry.CurrentUser.DeleteSubKeyTree(ClsidKey(hasContent: false), throwOnMissingSubKey: false);
+        Registry.CurrentUser.DeleteSubKeyTree(ClsidKey(hasContent: true), throwOnMissingSubKey: false);
         ShellNotify.AssociationsChanged();
     }
 

@@ -26,6 +26,13 @@
 #define LOCKED_CLSID { 0x142bc879, 0xc3c7, 0x4d93, { 0xb1, 0xe6, 0x51, 0xcf, 0x20, 0xcc, 0x66, 0x1e } }
 #endif
 static const CLSID CLSID_LockedFolder = LOCKED_CLSID;
+// {4FB75F15-2E04-47FB-8F21-40CE81A144A5}: la misma clase para las carpetas bloqueadas que tienen contenido. Solo
+// cambia el icono que tiene registrado (DefaultIcon): en las vistas grandes el Explorador usa el de la
+// clase y no el IconResource del desktop.ini, así que vacías y con contenido necesitan clases distintas.
+#ifndef LOCKED_FILLED_CLSID
+#define LOCKED_FILLED_CLSID { 0x4fb75f15, 0x2e04, 0x47fb, { 0x8f, 0x21, 0x40, 0xce, 0x81, 0xa1, 0x44, 0xa5 } }
+#endif
+static const CLSID CLSID_LockedFolderFilled = LOCKED_FILLED_CLSID;
 // CLSID_ShellFSFolder: la carpeta normal del sistema de archivos.
 static const CLSID CLSID_FileSystemFolder = { 0xf3364ba0, 0x65b9, 0x11ce, { 0xa9, 0xba, 0x00, 0xaa, 0x00, 0x4a, 0xe8, 0x37 } };
 
@@ -111,6 +118,7 @@ static void LaunchUnlock(const std::wstring& folder, HWND owner)
 class LockedFolder final : public IShellFolder2, public IPersistFolder3
 {
     LONG _refs = 1;
+    const CLSID _clsid;
     PIDLIST_ABSOLUTE _pidl = nullptr;
     std::wstring _path;
     IShellFolder2* _inner = nullptr;
@@ -187,7 +195,7 @@ class LockedFolder final : public IShellFolder2, public IPersistFolder3
     }
 
 public:
-    LockedFolder() { InterlockedIncrement(&g_objects); }
+    explicit LockedFolder(REFCLSID clsid) : _clsid(clsid) { InterlockedIncrement(&g_objects); }
 
     // IUnknown
     IFACEMETHODIMP QueryInterface(REFIID riid, void** ppv) override
@@ -220,7 +228,7 @@ public:
     {
         if (!clsid)
             return E_POINTER;
-        *clsid = CLSID_LockedFolder;
+        *clsid = _clsid;
         return S_OK;
     }
     IFACEMETHODIMP Initialize(PCIDLIST_ABSOLUTE pidl) override { return SetLocation(pidl, nullptr); }
@@ -361,7 +369,11 @@ public:
 
 class ClassFactory final : public IClassFactory
 {
+    const CLSID _clsid;
+
 public:
+    explicit ClassFactory(REFCLSID clsid) : _clsid(clsid) {}
+
     IFACEMETHODIMP QueryInterface(REFIID riid, void** ppv) override
     {
         if (!ppv)
@@ -385,7 +397,7 @@ public:
         *ppv = nullptr;
         if (outer)
             return CLASS_E_NOAGGREGATION;
-        auto* folder = new (std::nothrow) LockedFolder();
+        auto* folder = new (std::nothrow) LockedFolder(_clsid);
         if (!folder)
             return E_OUTOFMEMORY;
         HRESULT hr = folder->QueryInterface(riid, ppv);
@@ -402,7 +414,8 @@ public:
     }
 };
 
-static ClassFactory g_factory;
+static ClassFactory g_factory(CLSID_LockedFolder);
+static ClassFactory g_filledFactory(CLSID_LockedFolderFilled);
 
 BOOL APIENTRY DllMain(HMODULE module, DWORD reason, LPVOID)
 {
@@ -419,9 +432,11 @@ STDAPI DllGetClassObject(REFCLSID clsid, REFIID riid, void** ppv)
     if (!ppv)
         return E_POINTER;
     *ppv = nullptr;
-    if (clsid != CLSID_LockedFolder)
-        return CLASS_E_CLASSNOTAVAILABLE;
-    return g_factory.QueryInterface(riid, ppv);
+    if (clsid == CLSID_LockedFolder)
+        return g_factory.QueryInterface(riid, ppv);
+    if (clsid == CLSID_LockedFolderFilled)
+        return g_filledFactory.QueryInterface(riid, ppv);
+    return CLASS_E_CLASSNOTAVAILABLE;
 }
 
 STDAPI DllCanUnloadNow()

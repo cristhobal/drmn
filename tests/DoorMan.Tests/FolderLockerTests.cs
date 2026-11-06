@@ -343,6 +343,25 @@ public sealed class FolderLockerTests : IDisposable
         Assert.Empty(Directory.GetFileSystemEntries(_folder));
     }
 
+    [Theory]
+    [InlineData(false, "folder_locked.ico")]
+    [InlineData(true, "filled_locked.ico")]
+    public void LockedIcon_DependsOnContent(bool withContent, string expectedIcon)
+    {
+        if (withContent)
+            File.WriteAllText(Path.Combine(_folder, "nota.txt"), "hola");
+        using var key = KeyMaterial.Create("x", FastIterations);
+        FolderLocker.Lock(_folder, key);
+        var ini = File.ReadAllText(Path.Combine(_folder, "desktop.ini"));
+        Assert.Contains(expectedIcon, ini);
+        // En las vistas grandes el Explorador usa el icono de la clase: cada caso lleva la suya.
+        Assert.Contains($"CLSID={DoorMan.Shell.ShellIntegration.LockedClsid(withContent)}", ini);
+
+        // Al ponerse al día (agente), el icono no debe cambiar.
+        FolderLocker.RefreshLockedAppearance(_folder);
+        Assert.Contains(expectedIcon, File.ReadAllText(Path.Combine(_folder, "desktop.ini")));
+    }
+
     [Fact]
     public void SymbolicLinks_AreRefused()
     {

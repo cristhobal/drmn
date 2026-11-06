@@ -19,6 +19,7 @@ internal sealed class AgentHost : ApplicationContext
     readonly Control _ui;
     readonly System.Windows.Forms.Timer _dehydrateTimer;
     readonly Dictionary<string, (string Folder, DateTime Since)> _inUse = new(StringComparer.OrdinalIgnoreCase);
+    readonly ContentWatcher _contentWatcher;
 
     public static AgentHost? Current { get; private set; }
     public CloudProvider Provider { get; }
@@ -54,6 +55,7 @@ internal sealed class AgentHost : ApplicationContext
         }
         foreach (var folder in AppState.Sync().Where(f => f.Locked))
             Watch(folder.Path, inUse: []);
+        _contentWatcher = new ContentWatcher();
 
         new Thread(ListenForCommands) { IsBackground = true, Name = "DoorMan órdenes" }.Start();
     }
