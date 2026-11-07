@@ -1,14 +1,60 @@
-# DoorMan
+<div align="center">
 
-Password protection for Windows 10/11 folders, built into File Explorer. DoorMan encrypts a folder's contents and asks
-for the password *before* anything inside can be seen or opened, whether from Explorer or from any other app.
+<br />
 
-Available in English, Spanish, French, Chinese (Simplified) and Hindi. It follows the Windows display language and
-falls back to English.
+<img src=".github/assets/preview.png" alt="DoorMan preview" width="100%" />
+
+<br />
+<br />
+
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="https://img.shields.io/badge/DoorMan-usedrmn.vercel.app-FAFAFA?style=for-the-badge&logoColor=080808&labelColor=FAFAFA">
+  <img alt="DoorMan" src="https://img.shields.io/badge/DoorMan-usedrmn.vercel.app-080808?style=for-the-badge&logoColor=FAFAFA&labelColor=080808">
+</picture>
+
+<br />
+<br />
+
+**Password protection for Windows 10/11 folders, built into File Explorer.**  
+DoorMan encrypts a folder's contents and asks for the password *before* anything inside can be seen or opened,
+whether from Explorer or from any other app.
+
+<br />
+
+[![Visit site](https://img.shields.io/badge/visit%20site-usedrmn.vercel.app-080808?style=flat-square&labelColor=080808)](https://usedrmn.vercel.app)
+[![Latest release](https://img.shields.io/github/v/release/cristhobal/drmn?style=flat-square&color=080808&labelColor=080808&label=release)](https://github.com/cristhobal/drmn/releases/latest)
+[![Windows 10 | 11](https://img.shields.io/badge/Windows-10%20%7C%2011-080808?style=flat-square&labelColor=080808&logo=windows&logoColor=FAFAFA)](#download-and-install)
+[![x64 · ARM64 · x86](https://img.shields.io/badge/arch-x64%20%C2%B7%20ARM64%20%C2%B7%20x86-080808?style=flat-square&labelColor=080808)](#download-and-install)
+[![.NET 10](https://img.shields.io/badge/.NET-10-080808?style=flat-square&labelColor=080808&logo=dotnet&logoColor=FAFAFA)](https://dotnet.microsoft.com)
+[![C++](https://img.shields.io/badge/shell%20extension-C%2B%2B-080808?style=flat-square&labelColor=080808&logo=cplusplus&logoColor=FAFAFA)](#how-it-works)
+[![AES-256-GCM](https://img.shields.io/badge/encryption-AES--256--GCM-080808?style=flat-square&labelColor=080808)](#how-it-works)
+
+<br />
+
+</div>
+
+---
+
+## Features
+
+- **Built into File Explorer** — protect, open and lock folders from the right-click menu, including the Windows 11
+  modern menu
+- **Real encryption** — the contents are packed and encrypted with AES-256-GCM; the key is derived from your password
+  with PBKDF2-SHA256 (600,000 iterations)
+- **Guarded from every app** — opening a file of a locked folder from anywhere (recent files, jump lists, the command
+  line…) asks for the password first
+- **Safe by design** — the encrypted copy is verified (SHA-256 of every file) before any original is removed
+- **Native look** — locked folders get a padlock icon in the style of Windows 10 or 11
+- **5 languages** — English, Spanish, French, Chinese (Simplified) and Hindi, following the Windows display language
+  (falls back to English)
+- **Single self-installing exe** — .NET included, per-user install, no account and no internet needed
+
+---
 
 ## Download and install
 
-Get the file for your PC from the [latest release](https://github.com/cristhobal/drmn/releases/latest):
+Get the file for your PC from the [latest release](https://github.com/cristhobal/drmn/releases/latest), or from
+[usedrmn.vercel.app](https://usedrmn.vercel.app):
 
 | Your Windows | File |
 |---|---|
@@ -25,17 +71,20 @@ you which one to download.
 3. Done. DoorMan installs for your user only, in `%LOCALAPPDATA%\Programs\DoorMan`, and starts silently with Windows.
    Uninstall it from **Settings → Apps**.
 
-The executable is not code-signed, so Windows SmartScreen may warn that it is an unrecognized app: choose
-**More info → Run anyway**.
+> [!NOTE]
+> The executable is not code-signed, so Windows SmartScreen may warn that it is an unrecognized app: choose
+> **More info → Run anyway**.
+
+---
 
 ## Usage
 
-1. Right-click a folder → **Protect with password**. Enter and confirm the password.
-2. Open the locked folder as usual (double-click). DoorMan asks for the password first; once it is correct, the folder
-   is decrypted and Explorer goes straight into it. A wrong password lets you try again.
-3. Opening a file of a locked folder from anywhere else (recent files, an app's jump list, the command line…) also asks
-   for the password; when it is correct, the folder is unlocked and the app gets the file.
-4. When you are done, right-click the folder → **Lock**. It is locked again with the same password.
+| Step | What to do |
+|---|---|
+| **Protect** | Right-click a folder → **Protect with password**. Enter and confirm the password. |
+| **Open** | Open the locked folder as usual (double-click). DoorMan asks for the password first; once it is correct, the folder is decrypted and Explorer goes straight into it. A wrong password lets you try again. |
+| **Open a file directly** | Opening a file of a locked folder from anywhere else (recent files, an app's jump list, the command line…) also asks for the password; when it is correct, the folder is unlocked and the app gets the file. |
+| **Lock** | When you are done, right-click the folder → **Lock**. It is locked again with the same password. |
 
 The context menu adapts to each folder: unprotected folders show **Protect with password**, locked folders show
 **Unlock** and unlocked ones show **Lock**. Locked folders show a padlock icon (empty or with content); unlocked
@@ -43,11 +92,20 @@ folders keep the normal Windows folder icon. Errors are reported with a native W
 **Unlock** is under **Show more options**: Windows shows no packaged commands on locked folders (double-clicking them
 asks for the password anyway).
 
+---
+
 ## How it works
 
-- **Encryption.** All contents (files, subfolders, attributes and timestamps) are packed into a single hidden file,
-  `Unlock folder.doorman`, encrypted with AES-256-GCM in 1 MiB chunks. The key is derived from the password with
-  PBKDF2-SHA256 (600,000 iterations).
+| Piece | Details |
+|---|---|
+| Encryption | All contents (files, subfolders, attributes and timestamps) are packed into a single hidden file, `Unlock folder.doorman`, encrypted with AES-256-GCM in 1 MiB chunks. |
+| Key derivation | PBKDF2-SHA256 with 600,000 iterations and a random salt; every lock derives a fresh content key with HKDF. |
+| Placeholders | Locked files are Windows Cloud Files placeholders with no content. |
+| Background agent | `DoorMan.exe --agent`, started at sign-in, serves file requests and context menu commands. |
+| Explorer extension | `DoorManShell.dll`, a native C++ `IShellFolder2`, asks for the password before Explorer opens a locked folder. |
+| Windows 11 menu | A sparse MSIX package declares an `IExplorerCommand` so the options appear in the modern context menu. |
+| Relocking | While a folder is unlocked, its key is kept with DPAPI and deleted when the folder is locked again. |
+
 - **Placeholders.** A locked folder is registered as a sync root with the Windows Cloud Files API (the mechanism behind
   OneDrive Files On-Demand). Every file is left as a placeholder with its name, size and dates but **no content**: the
   data only exists in the encrypted file. When any app tries to read a placeholder, Windows asks DoorMan for the data,
@@ -60,10 +118,10 @@ asks for the password anyway).
 - **Data safety.** The encrypted file is fully written and decrypted again to verify it (SHA-256 of every file)
   *before* any original is removed. Unlocking decrypts everything into a hidden staging folder first; if that fails,
   the folder stays locked and untouched.
-- **Explorer extension.** `DoorManShell.dll` is a native C++ shell extension (`IShellFolder2`). The `desktop.ini` of a
-  locked folder points to it, so when Explorer tries to open the folder the extension cancels the navigation and asks
-  for the password instead. Once unlocked, it forwards everything to the regular file system folder. Quick Access
-  entries are refreshed when locking so they also go through the extension.
+- **Explorer extension.** The `desktop.ini` of a locked folder points to `DoorManShell.dll`, so when Explorer tries to
+  open the folder the extension cancels the navigation and asks for the password instead. Once unlocked, it forwards
+  everything to the regular file system folder. Quick Access entries are refreshed when locking so they also go through
+  the extension.
 - **Relocking.** While a folder is unlocked, its key is stored protected with DPAPI (readable only by your Windows user)
   in `%LOCALAPPDATA%\DoorMan`. It is deleted when the folder is locked again.
 - **Context menu.** Menu entries are filtered per folder with `AppliesTo` on `System.ParsingPath` (the real path, not the
@@ -76,6 +134,66 @@ asks for the password anyway).
   the private key right away; the installer trusts the certificate (UAC) and removes those of previous builds.
 - **Single-file installer.** Each `DoorMan-<arch>.exe` is a self-contained .NET app that carries the Explorer extension
   for its architecture, the icons and the Windows 11 package as embedded resources, and extracts them when installing.
+
+---
+
+## Tech stack
+
+| Layer | Technology |
+|---|---|
+| App | C# · [.NET 10](https://dotnet.microsoft.com) · WinForms, self-contained single file |
+| Explorer extension | C++ · Win32 / COM (`IShellFolder2`, `IExplorerCommand`) |
+| Encryption | `System.Security.Cryptography` — AES-GCM, PBKDF2, HKDF, DPAPI |
+| File access | Windows Cloud Files API (sync root + placeholders) |
+| Windows 11 menu | Sparse MSIX package with a self-signed certificate |
+| Testing | xUnit |
+| Architectures | x64 · ARM64 · x86 |
+
+---
+
+## Architecture
+
+```
+/
+├── src/DoorMan/
+│   ├── Program.cs                      # Entry point: install, agent and command-line dispatch
+│   ├── Commands.cs                     # --protect / --open / --lock and legacy argument mapping
+│   ├── Strings.cs                      # Every user-facing text, in 5 languages
+│   │
+│   ├── Agent/
+│   │   ├── AgentHost.cs                # Background process started at sign-in (named pipe)
+│   │   └── CloudProvider.cs            # Cloud Files sync root: serves placeholder data on demand
+│   │
+│   ├── Core/
+│   │   ├── FolderLocker.cs             # Lock / unlock workflow, verification and staging
+│   │   ├── FolderArchive.cs            # Packs a folder (files, attributes, timestamps)
+│   │   ├── FolderRules.cs              # Which folders can be protected
+│   │   ├── CloudFiles.cs               # Cloud Files API helpers
+│   │   ├── AppState.cs                 # %LOCALAPPDATA%\DoorMan state and DPAPI-protected keys
+│   │   └── Support.cs
+│   │
+│   ├── Crypto/
+│   │   ├── KeyMaterial.cs              # PBKDF2 key envelope
+│   │   ├── VaultFile.cs                # Vault header and HKDF content key
+│   │   └── ChunkedStreams.cs           # AES-256-GCM in 1 MiB authenticated chunks
+│   │
+│   ├── Shell/
+│   │   ├── Installer.cs                # Per-user install, update and uninstall
+│   │   ├── ShellIntegration.cs         # Context menu verbs and folder icons
+│   │   ├── ContextMenuPackage.cs       # Windows 11 sparse package and certificate
+│   │   └── …                           # Explorer windows, Quick Access, embedded payload
+│   │
+│   └── UI/                             # Password, progress and main dialogs, notifications
+│
+├── native/DoorManShell/
+│   ├── DoorManShell.cpp                # IShellFolder2 + IExplorerCommand extension
+│   └── package/AppxManifest.xml        # Sparse package manifest ($ARCH$ per build)
+│
+├── icons/                              # Padlock and locked-folder icons (Windows 10 and 11 styles)
+└── tests/DoorMan.Tests/                # Unit tests
+```
+
+---
 
 ## Limitations
 
@@ -90,10 +208,15 @@ asks for the password anyway).
 - If a folder is moved or renamed while unlocked, locking it again asks for a new password.
 - A new version of the Explorer extension is loaded after Explorer restarts (or after signing out).
 
+---
+
 ## Development
 
-Requires the .NET 10 SDK, the Visual Studio C++ build tools (x64, x86 and ARM64) and the Windows SDK (`makeappx`,
-`signtool`).
+### Prerequisites
+
+- .NET 10 SDK
+- Visual Studio C++ build tools (x64, x86 and ARM64)
+- Windows SDK (`makeappx`, `signtool`)
 
 ```powershell
 dotnet test tests\DoorMan.Tests   # unit tests
@@ -101,8 +224,26 @@ dotnet test tests\DoorMan.Tests   # unit tests
 
 The build and packaging scripts (icons, native extension, signed MSIX) are kept out of this repository.
 
+### Adding a language
+
 User-facing texts live in `src/DoorMan/Strings.cs` (and the three Windows 11 menu titles in
 `native/DoorManShell/DoorManShell.cpp`); to add a language, add a value to `Language` and a translation to each entry.
 
-Command-line arguments: `--protect`, `--open`, `--lock` + folder path; `--install`, `--uninstall`, `--register`,
-`--unregister`, `--startup`, `--agent`.
+### Command-line arguments
+
+| Argument | Description |
+|---|---|
+| `--protect <folder>` | Protect a folder with a password |
+| `--open <folder>` | Unlock and open a protected folder |
+| `--lock <folder>` | Lock an unlocked folder again |
+| `--install` / `--uninstall` | Install or remove DoorMan for the current user |
+| `--register` / `--unregister` | Add or remove the Explorer integration |
+| `--startup` / `--agent` | Start the background agent (at sign-in / directly) |
+
+---
+
+<div align="center">
+
+Made by [Cristhobal Canales](https://www.cristhobal.cl) · [usedrmn.vercel.app](https://usedrmn.vercel.app)
+
+</div>
