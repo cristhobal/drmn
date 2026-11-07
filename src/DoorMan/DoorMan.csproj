@@ -13,9 +13,14 @@
     <SatelliteResourceLanguages>es</SatelliteResourceLanguages>
     <Product>DoorMan</Product>
     <Description>Protege carpetas con contraseña desde el Explorador de archivos</Description>
-    <Version>2.0.0</Version>
+    <Version>2.1.0</Version>
     <NeutralLanguage>es-ES</NeutralLanguage>
-    <ShellExtension>..\..\native\DoorManShell\bin\DoorManShell.dll</ShellExtension>
+    <!-- La extensión del Explorador tiene que ser de la arquitectura de Windows: la de este ejecutable. -->
+    <ShellArch Condition="'$(RuntimeIdentifier)' == 'win-x86'">x86</ShellArch>
+    <ShellArch Condition="'$(ShellArch)' == ''">x64</ShellArch>
+    <ShellExtension>..\..\native\DoorManShell\bin\$(ShellArch)\DoorManShell.dll</ShellExtension>
+    <!-- Paquete del menú de Windows 11 (DoorMan.msix y DoorMan.cer), generado antes de publicar. -->
+    <ContextMenuPackageDir>..\..\native\DoorManShell\bin\msix\</ContextMenuPackageDir>
     <ApplicationIcon>..\..\icons\generados\lock_closed.ico</ApplicationIcon>
     <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
     <!--
@@ -31,24 +36,24 @@
   </ItemGroup>
 
   <!--
-    Iconos de carpeta bloqueada (vacía/con contenido, estilo Windows 11 y win10_*): se instalan en «iconos».
-    Son los de icons\generados (herramientas\generar-iconos.ps1), con todos los tamaños que usa Windows.
+    Lo que la instalación pone junto al ejecutable va DENTRO de él (recursos «Payload/…», ver Payload.cs): así
+    basta con descargar un único DoorMan.exe y hacer doble clic. Son la extensión del Explorador, los iconos
+    (icons\generados: carpetas bloqueadas y los de la aplicación y las opciones del menú) y el paquete del
+    menú de Windows 11. En la carpeta de compilación también se copian sueltos, para depurar.
   -->
   <ItemGroup>
-    <None Include="..\..\icons\generados\*.ico"
-          Link="iconos\%(Filename)%(Extension)"
-          CopyToOutputDirectory="PreserveNewest"
-          CopyToPublishDirectory="PreserveNewest"
-          ExcludeFromSingleFile="true" />
+    <EmbeddedResource Include="..\..\icons\generados\*.ico" LogicalName="Payload/iconos/%(Filename)%(Extension)" />
+    <None Include="..\..\icons\generados\*.ico" Link="iconos\%(Filename)%(Extension)"
+          CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="Never" />
   </ItemGroup>
-
-  <!-- Extensión nativa del Explorador (native\DoorManShell\build.ps1): va junto al ejecutable. -->
   <ItemGroup Condition="Exists('$(ShellExtension)')">
-    <None Include="$(ShellExtension)"
-          Link="DoorManShell.dll"
-          CopyToOutputDirectory="PreserveNewest"
-          CopyToPublishDirectory="PreserveNewest"
-          ExcludeFromSingleFile="true" />
+    <EmbeddedResource Include="$(ShellExtension)" LogicalName="Payload/DoorManShell.dll" />
+    <None Include="$(ShellExtension)" Link="DoorManShell.dll"
+          CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="Never" />
+  </ItemGroup>
+  <ItemGroup Condition="Exists('$(ContextMenuPackageDir)DoorMan.msix') And Exists('$(ContextMenuPackageDir)DoorMan.cer')">
+    <EmbeddedResource Include="$(ContextMenuPackageDir)DoorMan.msix" LogicalName="Payload/DoorMan.msix" />
+    <EmbeddedResource Include="$(ContextMenuPackageDir)DoorMan.cer" LogicalName="Payload/DoorMan.cer" />
   </ItemGroup>
 
   <ItemGroup>

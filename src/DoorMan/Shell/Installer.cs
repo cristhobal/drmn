@@ -19,6 +19,19 @@ internal static class Installer
         Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "Programs", "DoorMan");
     static string InstalledExe => Path.Combine(InstallDir, "DoorMan.exe");
 
+    /// <summary>Si este proceso es la copia instalada (y no, por ejemplo, el archivo recién descargado).</summary>
+    public static bool IsRunningInstalled => PathUtil.AreSame(Environment.ProcessPath!, InstalledExe);
+
+    public static bool IsInstalled => File.Exists(InstalledExe);
+
+    /// <summary>
+    /// La extensión del Explorador tiene que ser de la arquitectura de Windows, y cada ejecutable lleva la suya:
+    /// la versión de 32 bits no puede instalarse en un Windows de 64 bits.
+    /// </summary>
+    public static bool IsWrongArchitecture => Environment.Is64BitOperatingSystem && !Environment.Is64BitProcess;
+
+    public const string DownloadUrl = "https://github.com/cristhobal/drmn/releases/latest";
+
     /// <returns>El código de salida: 0 si todo ha ido bien.</returns>
     public static int Install()
     {
@@ -30,9 +43,15 @@ internal static class Installer
             // Una copia instalada en ejecución bloquearía el archivo: se cierra antes de sustituirla.
             StopOtherInstances();
             File.Copy(current, InstalledExe, overwrite: true);
-            CopyExtension(Path.GetDirectoryName(current)!);
-            CopyIcons(Path.GetDirectoryName(current)!);
-            CopyPackage(Path.GetDirectoryName(current)!);
+            // Los archivos que acompañan al ejecutable van dentro de él; en una compilación de depuración
+            // están sueltos a su lado.
+            using (var payload = Payload.Extract())
+            {
+                var source = payload?.Directory ?? Path.GetDirectoryName(current)!;
+                CopyExtension(source);
+                CopyIcons(source);
+                CopyPackage(source);
+            }
             // La copia instalada puede pedir UAC (ContextMenuPackage): que su aviso salga delante.
             ContextMenuPackage.AllowNextProcessForeground();
             using var child = Process.Start(InstalledExe, "--instalar")!;
