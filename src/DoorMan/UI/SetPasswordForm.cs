@@ -1,6 +1,6 @@
 namespace DoorMan.UI;
 
-/// <summary>«Contraseña» y «Confirmar contraseña»; «Aceptar» solo se habilita si ambas están escritas y coinciden.</summary>
+/// <summary>“Password” and “Confirm password”; “OK” is only enabled when both are filled in and match.</summary>
 internal sealed class SetPasswordForm : DialogBase
 {
     readonly TextBox _password;
@@ -10,20 +10,20 @@ internal sealed class SetPasswordForm : DialogBase
 
     public string Password => _password.Text;
 
-    public SetPasswordForm(string folderName, string? note = null) : base("Proteger con contraseña")
+    public SetPasswordForm(string folderName, string? note = null) : base(Strings.ProtectWithPassword)
     {
-        AddInstruction($"Proteger «{folderName}» con contraseña");
+        AddInstruction(Strings.ProtectFolderHeading(folderName));
         if (note is not null)
             AddText(note);
-        AddText("Se cifrarán todos los archivos y subcarpetas. Si olvidas la contraseña, no podrás recuperar el contenido.");
+        AddText(Strings.ProtectWarning);
 
-        _password = AddPasswordField("&Contraseña:");
-        _confirm = AddPasswordField("C&onfirmar contraseña:");
-        var show = AddRow(new CheckBox { Text = "&Mostrar contraseñas", AutoSize = true, Margin = new Padding(0, 0, 0, 6) });
+        _password = AddPasswordField(Strings.PasswordLabel);
+        _confirm = AddPasswordField(Strings.ConfirmPasswordLabel);
+        var show = AddRow(new CheckBox { Text = Strings.ShowPasswords, AutoSize = true, Margin = new Padding(0, 0, 0, 6) });
         _error = AddErrorLabel();
 
-        var cancel = AddButton("Cancelar", DialogResult.Cancel);
-        _ok = AddButton("Aceptar", DialogResult.OK);
+        var cancel = AddButton(Strings.Cancel, DialogResult.Cancel);
+        _ok = AddButton(Strings.OK, DialogResult.OK);
         _ok.Enabled = false;
         AcceptButton = _ok;
         CancelButton = cancel;
@@ -42,6 +42,6 @@ internal sealed class SetPasswordForm : DialogBase
         bool bothFilled = _password.TextLength > 0 && _confirm.TextLength > 0;
         bool match = bothFilled && string.Equals(_password.Text, _confirm.Text, StringComparison.Ordinal);
         _ok.Enabled = match;
-        _error.Text = bothFilled && !match ? "Las contraseñas no coinciden." : "";
+        _error.Text = bothFilled && !match ? Strings.PasswordsDoNotMatch : "";
     }
 }

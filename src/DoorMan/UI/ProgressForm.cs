@@ -3,7 +3,7 @@ using DoorMan.Core;
 
 namespace DoorMan.UI;
 
-/// <summary>Ejecuta una operación larga en segundo plano mostrando una barra de progreso.</summary>
+/// <summary>Runs a long operation in the background while showing a progress bar.</summary>
 internal sealed class ProgressForm : DialogBase
 {
     readonly Func<IProgress<ProgressInfo>, object?> _work;
@@ -20,7 +20,7 @@ internal sealed class ProgressForm : DialogBase
         AddInstruction(instruction);
         _bar = AddRow(new ProgressBar { Width = ContentWidth, Maximum = 1000, Style = ProgressBarStyle.Marquee, Margin = new Padding(0, 0, 0, 8) });
         _detail = AddRow(new Label { AutoSize = false, Width = ContentWidth, Height = Font.Height + 4, AutoEllipsis = true, UseMnemonic = false, Margin = Padding.Empty });
-        AddText("No cierres esta ventana ni apagues el equipo hasta que termine.", bottomMargin: 0);
+        AddText(Strings.DoNotClose, bottomMargin: 0);
         Buttons.Visible = false;
         FormClosing += (_, e) => e.Cancel |= !_done;
     }

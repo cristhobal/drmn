@@ -1,20 +1,20 @@
 namespace DoorMan.Core;
 
-/// <summary>Comprobaciones previas para no cifrar carpetas que dejarían Windows o la aplicación inservibles.</summary>
+/// <summary>Checks done first so that no folder is encrypted that would leave Windows or the app unusable.</summary>
 internal static class FolderRules
 {
     public static void EnsureCanProtect(string folder)
     {
         if (!Directory.Exists(folder))
-            throw new UserFacingException("La carpeta no existe o no está disponible.");
+            throw new UserFacingException(Strings.FolderUnavailable);
 
         var info = new DirectoryInfo(folder);
         if (info.Attributes.HasFlag(FileAttributes.ReparsePoint))
-            throw new UserFacingException("No se pueden proteger enlaces simbólicos ni puntos de unión.");
+            throw new UserFacingException(Strings.CannotProtectLinks);
         if (PathUtil.AreSame(Path.GetPathRoot(folder) ?? folder, folder))
-            throw new UserFacingException("No se puede proteger la raíz de una unidad.");
+            throw new UserFacingException(Strings.CannotProtectDriveRoot);
 
-        // Carpetas del sistema: no se puede proteger ni la carpeta ni nada que esté dentro.
+        // System folders: neither the folder nor anything inside it can be protected.
         string[] systemTrees =
         [
             Environment.GetFolderPath(Environment.SpecialFolder.Windows),
@@ -26,9 +26,9 @@ internal static class FolderRules
         ];
         foreach (var tree in systemTrees.Where(t => t.Length > 0))
             if (PathUtil.IsSameOrInside(folder, tree))
-                throw new UserFacingException("No se pueden proteger carpetas del sistema ni de configuración de programas.");
+                throw new UserFacingException(Strings.CannotProtectSystemFolders);
 
-        // Carpetas que contienen algo imprescindible (el perfil de usuario, Windows, esta aplicación…).
+        // Folders that contain something essential (the user profile, Windows, this app…).
         string[] mustStayOutside =
         [
             .. systemTrees,
@@ -38,10 +38,10 @@ internal static class FolderRules
         foreach (var path in mustStayOutside.Where(p => p.Length > 0))
             if (PathUtil.IsSameOrInside(path, folder))
                 throw new UserFacingException(PathUtil.AreSame(path, AppContext.BaseDirectory)
-                    ? "No se puede proteger la carpeta donde está instalada DoorMan."
-                    : "No se puede proteger esta carpeta porque contiene carpetas del sistema o tu perfil de usuario.");
+                    ? Strings.CannotProtectInstallFolder
+                    : Strings.CannotProtectContainsSystem);
 
-        // Carpetas personales conocidas: protegerlas enteras rompería otros programas.
+        // Known personal folders: protecting them whole would break other apps.
         Environment.SpecialFolder[] known =
         [
             Environment.SpecialFolder.Desktop, Environment.SpecialFolder.MyDocuments,
@@ -51,25 +51,25 @@ internal static class FolderRules
         var downloads = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), "Downloads");
         foreach (var path in known.Select(Environment.GetFolderPath).Append(downloads).Where(p => p.Length > 0))
             if (PathUtil.AreSame(path, folder))
-                throw new UserFacingException("No se puede proteger una carpeta personal de Windows completa. Protege una subcarpeta en su lugar.");
+                throw new UserFacingException(Strings.CannotProtectPersonalFolder);
 
         EnsureWritable(folder);
     }
 
     static void EnsureWritable(string folder)
     {
-        var probe = Path.Combine(folder, $".cp-prueba-{Guid.NewGuid():N}.tmp");
+        var probe = Path.Combine(folder, $".doorman-probe-{Guid.NewGuid():N}.tmp");
         try
         {
             using var _ = new FileStream(probe, FileMode.CreateNew, FileAccess.Write, FileShare.None, 1, FileOptions.DeleteOnClose);
         }
         catch (UnauthorizedAccessException)
         {
-            throw new UserFacingException("No tienes permiso de escritura en esta carpeta.");
+            throw new UserFacingException(Strings.NoWritePermission);
         }
         catch (IOException ex)
         {
-            throw new UserFacingException($"No se puede escribir en esta carpeta: {ex.Message}");
+            throw new UserFacingException(Strings.CannotWrite(ex.Message));
         }
     }
 }

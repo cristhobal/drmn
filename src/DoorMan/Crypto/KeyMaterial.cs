@@ -5,9 +5,9 @@ using System.Text;
 namespace DoorMan.Crypto;
 
 /// <summary>
-/// Clave de datos de una carpeta junto con su «sobre»: la misma clave cifrada con otra
-/// derivada de la contraseña (PBKDF2-SHA256 + AES-256-GCM). El sobre se guarda en la
-/// cabecera de la bóveda y permite volver a bloquear con la misma contraseña sin pedirla.
+/// The data key of a folder together with its “envelope”: the same key encrypted with another one derived from the
+/// password (PBKDF2-SHA256 + AES-256-GCM). The envelope is stored in the vault header and lets the folder be locked
+/// again with the same password without asking for it.
 /// </summary>
 internal sealed class KeyMaterial : IDisposable
 {
@@ -17,7 +17,7 @@ internal sealed class KeyMaterial : IDisposable
     const int NonceSize = 12;
     const int TagSize = 16;
 
-    // iteraciones (4) | sal (16) | nonce (12) | clave cifrada (32) | etiqueta (16)
+    // iterations (4) | salt (16) | nonce (12) | encrypted key (32) | tag (16)
     public const int EnvelopeSize = 4 + SaltSize + NonceSize + KeySize + TagSize;
     const int AadSize = 4 + SaltSize;
 
@@ -56,15 +56,15 @@ internal sealed class KeyMaterial : IDisposable
         return new KeyMaterial(envelope, dataKey);
     }
 
-    /// <exception cref="WrongPasswordException">La contraseña no abre el sobre.</exception>
+    /// <exception cref="WrongPasswordException">The password does not open the envelope.</exception>
     public static KeyMaterial Open(ReadOnlySpan<byte> envelope, string password)
     {
         if (envelope.Length != EnvelopeSize)
-            throw new InvalidDataException("La cabecera de la carpeta protegida no es válida.");
+            throw new InvalidDataException(Strings.VaultInvalid);
 
         int iterations = BinaryPrimitives.ReadInt32LittleEndian(envelope);
         if (iterations < 10_000 || iterations > 50_000_000)
-            throw new InvalidDataException("La cabecera de la carpeta protegida no es válida.");
+            throw new InvalidDataException(Strings.VaultInvalid);
 
         var kek = DeriveKek(password, envelope.Slice(4, SaltSize), iterations);
         var dataKey = new byte[KeySize];
@@ -89,11 +89,11 @@ internal sealed class KeyMaterial : IDisposable
         return new KeyMaterial(envelope.ToArray(), dataKey);
     }
 
-    /// <summary>Reconstruye la clave a partir de un sobre y una clave de datos ya verificados.</summary>
+    /// <summary>Rebuilds the key from an envelope and a data key that were already verified.</summary>
     public static KeyMaterial FromParts(byte[] envelope, byte[] dataKey)
     {
         if (envelope.Length != EnvelopeSize || dataKey.Length != KeySize)
-            throw new InvalidDataException("La clave guardada no es válida.");
+            throw new InvalidDataException("The stored key is not valid.");
         return new KeyMaterial(envelope, dataKey);
     }
 
@@ -113,4 +113,4 @@ internal sealed class KeyMaterial : IDisposable
     public void Dispose() => CryptographicOperations.ZeroMemory(DataKey);
 }
 
-internal sealed class WrongPasswordException() : Exception("La contraseña no es correcta.");
+internal sealed class WrongPasswordException() : Exception(Strings.WrongPassword);

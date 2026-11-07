@@ -6,10 +6,9 @@ using DoorMan.Shell;
 namespace DoorMan.Agent;
 
 /// <summary>
-/// El proceso de DoorMan que se queda en segundo plano desde el inicio de sesión, sin ventanas.
-/// Mantiene conectadas las carpetas bloqueadas (sin él, Windows responde a quien abra uno de sus
-/// archivos que «el proveedor de archivos de nube no se está ejecutando») y ejecuta las órdenes del
-/// menú contextual, que le llegan por una tubería con nombre solo accesible para este usuario.
+/// The DoorMan process that stays in the background from sign-in, without windows. It keeps locked folders
+/// connected (without it, Windows tells anyone opening one of their files that “the cloud file provider is not
+/// running”) and runs the context menu commands, which reach it through a named pipe only this user can access.
 /// </summary>
 internal sealed class AgentHost : ApplicationContext
 {
@@ -25,10 +24,10 @@ internal sealed class AgentHost : ApplicationContext
     public static string PipeName =>
         $"DoorMan-{WindowsIdentity.GetCurrent().User?.Value}-{System.Diagnostics.Process.GetCurrentProcess().SessionId}";
 
-    /// <summary>Ejecuta el agente hasta que se cierre la sesión. Si ya hay uno en marcha, termina enseguida.</summary>
+    /// <summary>Runs the agent until the session ends. If one is already running, it returns right away.</summary>
     public static void Run()
     {
-        using var single = new Mutex(true, @"Local\DoorMan.Agente", out bool first);
+        using var single = new Mutex(true, @"Local\DoorMan.Agent", out bool first);
         if (!first)
             return;
         Application.Run(new AgentHost());
@@ -54,12 +53,12 @@ internal sealed class AgentHost : ApplicationContext
         foreach (var folder in AppState.Sync().Where(f => f.Locked))
             Watch(folder.Path, inUse: []);
 
-        new Thread(ListenForCommands) { IsBackground = true, Name = "DoorMan órdenes" }.Start();
+        new Thread(ListenForCommands) { IsBackground = true, Name = "DoorMan commands" }.Start();
     }
 
     /// <summary>
-    /// Conecta una carpeta recién bloqueada. Los archivos que estaban abiertos al bloquearla se
-    /// vacían en cuanto se cierren.
+    /// Connects a folder that has just been locked. Files that were open when it was locked are emptied as soon as
+    /// they are closed.
     /// </summary>
     public void Watch(string folder, IEnumerable<string> inUse)
     {
@@ -120,24 +119,24 @@ internal sealed class AgentHost : ApplicationContext
             }
             catch (IOException)
             {
-                // El cliente se fue antes de tiempo; se espera al siguiente.
+                // The client left too early; wait for the next one.
             }
         }
     }
 }
 
-/// <summary>Envía una orden del menú contextual al agente, arrancándolo si hace falta.</summary>
+/// <summary>Sends a context menu command to the agent, starting it if needed.</summary>
 internal static class AgentClient
 {
     public static bool TrySend(string[] args)
     {
-        // El agente no está en primer plano: se le permite traer sus ventanas al frente.
+        // The agent is not in the foreground: allow it to bring its windows to the front.
         Windows.Win32.PInvoke.AllowSetForegroundWindow(unchecked((uint)-1));
         if (TrySendOnce(args, 300))
             return true;
         try
         {
-            System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo(Environment.ProcessPath!, "--agente")
+            System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo(Environment.ProcessPath!, "--agent")
             {
                 UseShellExecute = false,
             })?.Dispose();

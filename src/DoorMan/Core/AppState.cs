@@ -9,16 +9,18 @@ namespace DoorMan.Core;
 internal sealed record ProtectedFolder(string Path, bool Locked);
 
 /// <summary>
-/// Estado por usuario en %LOCALAPPDATA%\DoorMan: la lista de carpetas gestionadas y,
-/// mientras una carpeta está desbloqueada, su clave protegida con DPAPI para poder
-/// «Volver a bloquear» con la misma contraseña. La clave se borra al bloquear.
+/// Per-user state in %LOCALAPPDATA%\DoorMan: the list of managed folders and, while a folder is unlocked, its key
+/// protected with DPAPI so that “Lock” can use the same password again. The key is deleted when locking.
 /// </summary>
 internal static class AppState
 {
     static readonly string Dir = Path.Combine(
         Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "DoorMan");
-    static string IndexPath => Path.Combine(Dir, "carpetas.json");
-    static string KeysDir => Path.Combine(Dir, "claves");
+    static string IndexPath => Path.Combine(Dir, "folders.json");
+    static string KeysDir => Path.Combine(Dir, "keys");
+    // Names used by versions before 3.0, moved to the current ones the first time.
+    static string LegacyIndexPath => Path.Combine(Dir, "carpetas.json");
+    static string LegacyKeysDir => Path.Combine(Dir, "claves");
 
     public static void MarkLocked(string folder) => Update(set =>
     {
@@ -32,7 +34,7 @@ internal static class AppState
         SaveKey(folder, key);
     });
 
-    /// <summary>Revisa la lista contra el disco y actualiza el menú contextual.</summary>
+    /// <summary>Checks the list against the disk and updates the context menu.</summary>
     public static IReadOnlyList<ProtectedFolder> Sync()
     {
         IReadOnlyList<ProtectedFolder> result = [];
@@ -40,7 +42,7 @@ internal static class AppState
         return result;
     }
 
-    /// <summary>Las carpetas gestionadas, sin comprobarlas ni tomar el bloqueo (para el vigilante).</summary>
+    /// <summary>The managed folders, without checking them or taking the lock (for the watcher).</summary>
     public static IReadOnlyCollection<string> ReadIndex()
     {
         try
@@ -57,6 +59,7 @@ internal static class AppState
 
     public static KeyMaterial? TryLoadKey(string folder)
     {
+        MigrateLegacyFiles();
         var path = KeyPath(folder);
         if (!File.Exists(path))
             return null;
@@ -73,18 +76,19 @@ internal static class AppState
 
     static void Update(Action<HashSet<string>> change, Action<IReadOnlyList<ProtectedFolder>>? after = null)
     {
-        using var mutex = new Mutex(false, @"Local\DoorMan.Estado");
+        using var mutex = new Mutex(false, @"Local\DoorMan.State");
         try
         {
             if (!mutex.WaitOne(TimeSpan.FromSeconds(30)))
-                throw new TimeoutException("No se pudo acceder a la configuración de DoorMan.");
+                throw new TimeoutException(Strings.SettingsUnavailable);
         }
         catch (AbandonedMutexException)
         {
-            // El otro proceso terminó sin liberarlo; ahora es nuestro.
+            // The other process ended without releasing it; now it is ours.
         }
         try
         {
+            MigrateLegacyFiles();
             var set = Load();
             change(set);
             var folders = Prune(set);
@@ -98,6 +102,22 @@ internal static class AppState
         }
     }
 
+    /// <summary>Moves the folder list and the keys of versions before 3.0 to their current names.</summary>
+    static void MigrateLegacyFiles()
+    {
+        try
+        {
+            if (File.Exists(LegacyIndexPath) && !File.Exists(IndexPath))
+                File.Move(LegacyIndexPath, IndexPath);
+            if (Directory.Exists(LegacyKeysDir) && !Directory.Exists(KeysDir))
+                Directory.Move(LegacyKeysDir, KeysDir);
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            // It is tried again next time.
+        }
+    }
+
     static List<ProtectedFolder> Prune(HashSet<string> set)
     {
         var result = new List<ProtectedFolder>();
@@ -108,7 +128,7 @@ internal static class AppState
             if (locked)
                 FolderLocker.RefreshLockedAppearance(folder);
             else if (unlocked)
-                FolderLocker.RemoveUnlockedAppearance(folder); // icono normal de Windows (las versiones anteriores ponían uno propio)
+                FolderLocker.RemoveUnlockedAppearance(folder); // normal Windows icon (earlier versions used their own)
             if (locked || unlocked)
             {
                 result.Add(new ProtectedFolder(folder, locked));
@@ -134,7 +154,7 @@ internal static class AppState
         }
         catch (JsonException)
         {
-            // Índice dañado: se reconstruye con lo que se vaya registrando.
+            // Damaged list: it is rebuilt with the folders registered from now on.
         }
         return set;
     }

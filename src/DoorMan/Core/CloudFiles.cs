@@ -11,11 +11,10 @@ namespace DoorMan.Core;
 internal enum PlaceholderState { None, Hydrated, Dehydrated }
 
 /// <summary>
-/// Archivos marcadores con la API Cloud Files de Windows (la de OneDrive «archivos a petición").
-/// Una carpeta bloqueada se registra como raíz de sincronización y cada archivo queda como un
-/// marcador sin contenido: conserva nombre, tamaño y fechas, pero sus datos solo están en el
-/// archivo cifrado. Cuando cualquier programa intenta leerlo, Windows se los pide a DoorMan
-/// (ver <see cref="Agent.CloudProvider"/>), que pide la contraseña.
+/// Placeholder files with the Windows Cloud Files API (the one behind OneDrive Files On-Demand). A locked folder is
+/// registered as a sync root and each file is left as a placeholder without content: it keeps its name, size and
+/// dates, but its data only exists in the encrypted file. When any app tries to read it, Windows asks DoorMan for
+/// the data (see <see cref="Agent.CloudProvider"/>), and DoorMan asks for the password.
 /// </summary>
 internal static class CloudFiles
 {
@@ -27,8 +26,8 @@ internal static class CloudFiles
     const uint FileReadAttributes = 0x0080;
     const uint FileWriteAttributes = 0x0100;
 
-    /// <summary>Registra la carpeta como raíz de sincronización de DoorMan.</summary>
-    /// <returns><c>false</c> si el volumen no lo admite (no es NTFS, es de red…) o la carpeta ya está dentro de otra raíz (OneDrive…).</returns>
+    /// <summary>Registers the folder as a DoorMan sync root.</summary>
+    /// <returns><c>false</c> if the volume does not support it (not NTFS, network drive…) or the folder is already inside another sync root (OneDrive…).</returns>
     public static unsafe bool TryRegister(string folder)
     {
         var identity = Encoding.Unicode.GetBytes(folder);
@@ -49,7 +48,7 @@ internal static class CloudFiles
             var policies = new CF_SYNC_POLICIES
             {
                 StructSize = (uint)sizeof(CF_SYNC_POLICIES),
-                // El contenido se entrega entero y DoorMan crea todos los marcadores por adelantado.
+                // Content is handed over whole and DoorMan creates every placeholder up front.
                 Hydration = new() { Primary = CF_HYDRATION_POLICY_PRIMARY.CF_HYDRATION_POLICY_FULL },
                 Population = new() { Primary = CF_POPULATION_POLICY_PRIMARY.CF_POPULATION_POLICY_ALWAYS_FULL },
                 InSync = CF_INSYNC_POLICY.CF_INSYNC_POLICY_NONE,
@@ -60,10 +59,10 @@ internal static class CloudFiles
     }
 
     /// <summary>
-    /// Conexión mínima, sin atender peticiones. Windows solo convierte del todo en marcadores (y les
-    /// quita el contenido) los archivos de una raíz con un proveedor conectado.
+    /// Minimal connection that serves no requests. Windows only fully converts files into placeholders (and removes
+    /// their content) in a sync root with a connected provider.
     /// </summary>
-    /// <returns><c>null</c> si no se puede conectar (p. ej. el agente ya está conectado a esa carpeta).</returns>
+    /// <returns><c>null</c> if it cannot connect (for example, the agent is already connected to that folder).</returns>
     public static unsafe IDisposable? TryConnectForConversion(string folder)
     {
         CF_CALLBACK_REGISTRATION[] none = [new() { Type = CF_CALLBACK_TYPE.CF_CALLBACK_TYPE_NONE }];
@@ -77,10 +76,10 @@ internal static class CloudFiles
         public void Dispose() => PInvoke.CfDisconnectSyncRoot(key);
     }
 
-    /// <summary>Da de baja la raíz. Convierte en normales las carpetas y los marcadores que ya tengan su contenido.</summary>
+    /// <summary>Unregisters the sync root. Folders and placeholders that already have their content become normal ones.</summary>
     public static void Unregister(string folder) => PInvoke.CfUnregisterSyncRoot(folder);
 
-    /// <summary>¿Es la carpeta una raíz de sincronización de DoorMan?</summary>
+    /// <summary>Is the folder a DoorMan sync root?</summary>
     public static unsafe bool IsSyncRoot(string folder)
     {
         var buffer = new byte[sizeof(CF_SYNC_ROOT_BASIC_INFO) + 4096];
@@ -88,7 +87,7 @@ internal static class CloudFiles
         {
             if (PInvoke.CfGetSyncRootInfoByPath(folder, CF_SYNC_ROOT_INFO_CLASS.CF_SYNC_ROOT_INFO_BASIC, p, (uint)buffer.Length).Failed)
                 return false;
-            // La consulta también responde para cualquier carpeta dentro de una raíz: se comprueba que sea la propia.
+            // The query also answers for any folder inside a sync root: check that it is the root itself.
             var path = PathUtil.Normalize(folder);
             var info = (CF_SYNC_ROOT_BASIC_INFO*)p;
             return info->SyncRootFileId == FileId(path);
@@ -96,13 +95,13 @@ internal static class CloudFiles
     }
 
     /// <summary>
-    /// Convierte un archivo o una carpeta en marcador. A los archivos se les quita el contenido.
+    /// Converts a file or a folder into a placeholder. Files lose their content.
     /// </summary>
-    /// <returns><c>false</c> si el archivo está abierto por otro programa y no se le ha podido quitar el contenido
-    /// (queda como marcador con contenido; <see cref="TryDehydrate"/> lo reintenta).</returns>
+    /// <returns><c>false</c> if the file is open in another app and its content could not be removed (it stays as
+    /// a placeholder with content; <see cref="TryDehydrate"/> tries again).</returns>
     public static bool ConvertToPlaceholder(string path, string relativePath, bool isDirectory)
     {
-        // Un archivo de solo lectura no se puede abrir para quitarle el contenido: se le quita el atributo mientras tanto.
+        // A read-only file cannot be opened to remove its content: the attribute is cleared meanwhile.
         var attributes = File.GetAttributes(path);
         bool readOnly = !isDirectory && attributes.HasFlag(FileAttributes.ReadOnly);
         if (readOnly)
@@ -132,17 +131,17 @@ internal static class CloudFiles
                 return true;
             }
         }
-        // En uso: se convierte sin quitarle el contenido, con un acceso que no choca con quien lo tiene abierto.
+        // In use: it is converted without removing its content, with an access that does not clash with whoever has it open.
         using (var handle = Open(path, FileReadAttributes | FileWriteAttributes, isDirectory, exclusive: false))
         {
             if (handle.IsInvalid)
-                throw new IOException($"No se puede acceder a «{relativePath}».", Marshal.GetHRForLastWin32Error());
+                throw new IOException(Strings.CannotAccess(relativePath), Marshal.GetHRForLastWin32Error());
             PInvoke.CfConvertToPlaceholder(handle, identity, CF_CONVERT_FLAGS.CF_CONVERT_FLAG_MARK_IN_SYNC).ThrowOnFailure();
         }
         return isDirectory;
     }
 
-    /// <summary>Quita el contenido de un marcador que aún lo tiene (p. ej. estaba abierto al bloquear).</summary>
+    /// <summary>Removes the content of a placeholder that still has it (for example, it was open while locking).</summary>
     public static bool TryDehydrate(string path)
     {
         using var handle = Open(path, FileReadData | FileWriteData | FileReadAttributes | FileWriteAttributes, isDirectory: false, exclusive: true);
@@ -150,8 +149,8 @@ internal static class CloudFiles
     }
 
     /// <summary>
-    /// Convierte un marcador con contenido en un archivo normal. Funciona aunque otro programa lo
-    /// tenga abierto, porque solo pide acceso a los atributos.
+    /// Turns a placeholder with content into a normal file. It works even if another app has it open, because it
+    /// only asks for access to the attributes.
     /// </summary>
     public static bool TryRevert(string path, bool isDirectory)
     {
@@ -160,14 +159,14 @@ internal static class CloudFiles
     }
 
     /// <summary>
-    /// Estado del archivo según Windows. No vale mirar los atributos: sin un proveedor conectado,
-    /// Windows los muestra como los de un archivo normal.
+    /// The state of the file according to Windows. Looking at the attributes is not enough: without a connected
+    /// provider, Windows shows them as those of a normal file.
     /// </summary>
     public static unsafe PlaceholderState GetState(string path)
     {
         using var handle = Open(path, FileReadAttributes, isDirectory: false, exclusive: false);
         if (handle.IsInvalid)
-            throw new IOException($"No se puede acceder a «{path}».", Marshal.GetHRForLastWin32Error());
+            throw new IOException(Strings.CannotAccess(path), Marshal.GetHRForLastWin32Error());
         var buffer = new byte[sizeof(CF_PLACEHOLDER_STANDARD_INFO) + 4096];
         fixed (byte* p = buffer)
         {
@@ -193,7 +192,7 @@ internal static class CloudFiles
         PInvoke.CreateFile(path, access,
             exclusive ? FILE_SHARE_MODE.FILE_SHARE_NONE
                 : FILE_SHARE_MODE.FILE_SHARE_READ | FILE_SHARE_MODE.FILE_SHARE_WRITE | FILE_SHARE_MODE.FILE_SHARE_DELETE,
-            // Abrir un marcador no pide su contenido; solo leerlo.
+            // Opening a placeholder does not fetch its content; only reading it does.
             null, FILE_CREATION_DISPOSITION.OPEN_EXISTING,
             isDirectory ? FILE_FLAGS_AND_ATTRIBUTES.FILE_FLAG_BACKUP_SEMANTICS : 0,
             null);

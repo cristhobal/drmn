@@ -4,10 +4,9 @@ using System.Security.Cryptography;
 namespace DoorMan.Crypto;
 
 /// <summary>
-/// Formato de flujo por bloques: cada bloque es
-/// <c>indicador final (1) | longitud (4) | texto cifrado | etiqueta GCM (16)</c>.
-/// El nonce lleva el número de bloque y el indicador final, así que reordenar,
-/// eliminar o truncar bloques hace fallar la autenticación.
+/// Chunked stream format: each chunk is <c>final flag (1) | length (4) | ciphertext | GCM tag (16)</c>.
+/// The nonce holds the chunk number and the final flag, so reordering, removing or truncating chunks makes
+/// authentication fail.
 /// </summary>
 internal static class ChunkFormat
 {
@@ -23,7 +22,7 @@ internal static class ChunkFormat
     }
 }
 
-/// <summary>Flujo de solo escritura que cifra en bloques. Hay que llamar a <see cref="Complete"/> al terminar.</summary>
+/// <summary>Write-only stream that encrypts in chunks. <see cref="Complete"/> must be called at the end.</summary>
 internal sealed class EncryptingStream : Stream
 {
     readonly Stream _inner;
@@ -50,7 +49,7 @@ internal sealed class EncryptingStream : Stream
         ObjectDisposedException.ThrowIf(_completed, this);
         while (buffer.Length > 0)
         {
-            // Un bloque lleno solo se emite cuando llegan más datos: así el último siempre lleva el indicador final.
+            // A full chunk is only written when more data arrives: that way the last one always carries the final flag.
             if (_count == _buffer.Length)
                 WriteChunk(final: false);
             int n = Math.Min(_buffer.Length - _count, buffer.Length);
@@ -107,7 +106,7 @@ internal sealed class EncryptingStream : Stream
     public override void SetLength(long value) => throw new NotSupportedException();
 }
 
-/// <summary>Flujo de solo lectura que descifra y autentica cada bloque antes de entregarlo.</summary>
+/// <summary>Read-only stream that decrypts and authenticates each chunk before handing it over.</summary>
 internal sealed class DecryptingStream : Stream
 {
     readonly Stream _inner;
@@ -179,8 +178,7 @@ internal sealed class DecryptingStream : Stream
         }
     }
 
-    static InvalidDataException Corrupt() =>
-        new("El archivo cifrado de la carpeta está incompleto o dañado.");
+    static InvalidDataException Corrupt() => new(Strings.VaultDamaged);
 
     protected override void Dispose(bool disposing)
     {

@@ -5,7 +5,7 @@ using DoorMan.Crypto;
 
 namespace DoorMan.Tests;
 
-// Las pruebas cambian FolderLocker.UsePlaceholders: no pueden ejecutarse en paralelo.
+// The tests change FolderLocker.UsePlaceholders: they cannot run in parallel.
 [CollectionDefinition("FolderLocker", DisableParallelization = true)]
 public sealed class FolderLockerCollection;
 
@@ -13,12 +13,13 @@ public sealed class FolderLockerCollection;
 public sealed class FolderLockerTests : IDisposable
 {
     const int FastIterations = 10_000;
-    readonly string _root = Path.Combine(Path.GetTempPath(), "cp-tests-" + Guid.NewGuid().ToString("N"));
+    readonly string _root = Path.Combine(Path.GetTempPath(), "doorman-tests-" + Guid.NewGuid().ToString("N"));
     readonly string _folder;
 
     public FolderLockerTests()
     {
-        _folder = Path.Combine(_root, "Mis documentos privados");
+        // Non-ASCII names on purpose: paths and contents must survive any Unicode.
+        _folder = Path.Combine(_root, "Private documents ñ");
         Directory.CreateDirectory(_folder);
     }
 
@@ -36,11 +37,11 @@ public sealed class FolderLockerTests : IDisposable
     {
         var files = new Dictionary<string, byte[]>
         {
-            ["nota.txt"] = "Contraseña del banco: 1234 — confidencial"u8.ToArray(),
-            [@"Fotos\vacaciones año 2025.jpg"] = RandomNumberGenerator.GetBytes(3 * ChunkFormat.ChunkSize + 777),
-            [@"Fotos\Exactamente un bloque.bin"] = RandomNumberGenerator.GetBytes(ChunkFormat.ChunkSize),
-            [@"Fotos\Anidada\profunda\vacío.txt"] = [],
-            ["solo lectura.txt"] = "no tocar"u8.ToArray(),
+            ["note.txt"] = "Bank password: 1234 — confidential"u8.ToArray(),
+            [@"Photos\holidays 2025 été.jpg"] = RandomNumberGenerator.GetBytes(3 * ChunkFormat.ChunkSize + 777),
+            [@"Photos\Exactly one chunk.bin"] = RandomNumberGenerator.GetBytes(ChunkFormat.ChunkSize),
+            [@"Photos\Nested\deep\empty 空.txt"] = [],
+            ["read only.txt"] = "do not touch"u8.ToArray(),
         };
         foreach (var (rel, data) in files)
         {
@@ -48,9 +49,9 @@ public sealed class FolderLockerTests : IDisposable
             Directory.CreateDirectory(Path.GetDirectoryName(path)!);
             File.WriteAllBytes(path, data);
         }
-        Directory.CreateDirectory(Path.Combine(_folder, @"Carpeta vacía\otra vacía"));
-        File.SetAttributes(Path.Combine(_folder, "solo lectura.txt"), FileAttributes.ReadOnly);
-        File.SetLastWriteTimeUtc(Path.Combine(_folder, "nota.txt"), new DateTime(2020, 5, 17, 10, 30, 0, DateTimeKind.Utc));
+        Directory.CreateDirectory(Path.Combine(_folder, @"Empty folder\another empty"));
+        File.SetAttributes(Path.Combine(_folder, "read only.txt"), FileAttributes.ReadOnly);
+        File.SetLastWriteTimeUtc(Path.Combine(_folder, "note.txt"), new DateTime(2020, 5, 17, 10, 30, 0, DateTimeKind.Utc));
         return files;
     }
 
@@ -61,11 +62,11 @@ public sealed class FolderLockerTests : IDisposable
         Assert.False(File.Exists(Path.Combine(_folder, "desktop.ini")));
         foreach (var (rel, data) in files)
             Assert.Equal(data, File.ReadAllBytes(Path.Combine(_folder, rel)));
-        Assert.True(Directory.Exists(Path.Combine(_folder, @"Carpeta vacía\otra vacía")));
-        Assert.True(File.GetAttributes(Path.Combine(_folder, "solo lectura.txt")).HasFlag(FileAttributes.ReadOnly));
-        Assert.Equal(new DateTime(2020, 5, 17, 10, 30, 0, DateTimeKind.Utc), File.GetLastWriteTimeUtc(Path.Combine(_folder, "nota.txt")));
+        Assert.True(Directory.Exists(Path.Combine(_folder, @"Empty folder\another empty")));
+        Assert.True(File.GetAttributes(Path.Combine(_folder, "read only.txt")).HasFlag(FileAttributes.ReadOnly));
+        Assert.Equal(new DateTime(2020, 5, 17, 10, 30, 0, DateTimeKind.Utc), File.GetLastWriteTimeUtc(Path.Combine(_folder, "note.txt")));
         Assert.False(new DirectoryInfo(_folder).Attributes.HasFlag(FileAttributes.ReadOnly));
-        // Ni marcadores ni restos de la carpeta temporal del desbloqueo.
+        // Neither placeholders nor leftovers of the temporary unlock folder.
         foreach (var e in new DirectoryInfo(_folder).EnumerateFileSystemInfos("*", new EnumerationOptions { AttributesToSkip = 0, RecurseSubdirectories = true }))
             Assert.False(e.Attributes.HasFlag(FileAttributes.ReparsePoint), e.FullName);
         Assert.Equal(files.Keys.Order(), Directory.GetFiles(_folder, "*", new EnumerationOptions { AttributesToSkip = 0, RecurseSubdirectories = true })
@@ -76,7 +77,7 @@ public sealed class FolderLockerTests : IDisposable
     public void Lock_LeavesPlaceholdersWithoutContent_AndUnlockRestoresEverything()
     {
         var files = CreateSampleContent();
-        using var key = KeyMaterial.Create("secreta ñ", FastIterations);
+        using var key = KeyMaterial.Create("secret ñ", FastIterations);
 
         var result = FolderLocker.Lock(_folder, key);
 
@@ -91,15 +92,15 @@ public sealed class FolderLockerTests : IDisposable
             if (data.Length > 0)
             {
                 Assert.Equal(PlaceholderState.Dehydrated, CloudFiles.GetState(path));
-                // Sin el agente nadie entrega el contenido: no se puede leer.
+                // Without the agent nobody hands over the content: it cannot be read.
                 Assert.ThrowsAny<IOException>(() => File.ReadAllBytes(path));
             }
         }
         var vaultBytes = File.ReadAllBytes(Path.Combine(_folder, FolderLocker.VaultFileName));
-        Assert.Equal(-1, vaultBytes.AsSpan().IndexOf("Contraseña"u8));
-        Assert.Equal(-1, vaultBytes.AsSpan().IndexOf("nota.txt"u8));
+        Assert.Equal(-1, vaultBytes.AsSpan().IndexOf("Bank password"u8));
+        Assert.Equal(-1, vaultBytes.AsSpan().IndexOf("note.txt"u8));
 
-        using var opened = FolderLocker.OpenKey(_folder, "secreta ñ");
+        using var opened = FolderLocker.OpenKey(_folder, "secret ñ");
         FolderLocker.Unlock(_folder, opened);
 
         AssertRestored(files);
@@ -110,24 +111,42 @@ public sealed class FolderLockerTests : IDisposable
     {
         FolderLocker.UsePlaceholders = false;
         var files = CreateSampleContent();
-        using var key = KeyMaterial.Create("secreta ñ", FastIterations);
+        using var key = KeyMaterial.Create("secret ñ", FastIterations);
 
         var result = FolderLocker.Lock(_folder, key);
 
         Assert.Empty(result.NotDeleted);
         Assert.True(FolderLocker.IsLocked(_folder));
         var remaining = Directory.GetFileSystemEntries(_folder).Select(p => Path.GetFileName(p)!).Order().ToArray();
-        Assert.Equal(["Desbloquear carpeta.doorman", "desktop.ini"], remaining);
+        Assert.Equal(["desktop.ini", "Unlock folder.doorman"], remaining);
 
-        using var opened = FolderLocker.OpenKey(_folder, "secreta ñ");
+        using var opened = FolderLocker.OpenKey(_folder, "secret ñ");
         FolderLocker.Unlock(_folder, opened);
 
         AssertRestored(files);
     }
 
+    /// <summary>Folders locked by versions before 3.0 have their encrypted file under the old Spanish name.</summary>
+    [Fact]
+    public void FolderLockedByAnEarlierVersion_IsRecognizedAndUnlocks()
+    {
+        FolderLocker.UsePlaceholders = false;
+        var files = CreateSampleContent();
+        using var key = KeyMaterial.Create("x", FastIterations);
+        FolderLocker.Lock(_folder, key);
+        File.Move(Path.Combine(_folder, FolderLocker.VaultFileName), Path.Combine(_folder, FolderLocker.LegacyVaultFileName));
+
+        Assert.True(FolderLocker.IsLocked(_folder));
+        using var opened = FolderLocker.OpenKey(_folder, "x");
+        FolderLocker.Unlock(_folder, opened);
+
+        Assert.False(File.Exists(Path.Combine(_folder, FolderLocker.LegacyVaultFileName)));
+        AssertRestored(files);
+    }
+
     /// <summary>
-    /// Un programa lee un archivo de la carpeta bloqueada: Windows se lo pide al proveedor, que
-    /// desbloquea la carpeta (aquí sin ventana, como si se hubiera escrito la contraseña) y se lo entrega.
+    /// An app reads a file of the locked folder: Windows asks the provider, which unlocks the folder (here without a
+    /// window, as if the password had been typed) and hands the file over.
     /// </summary>
     [Fact]
     public void ReadingAPlaceholder_UnlocksTheFolder_AndTheProgramGetsTheFile()
@@ -158,12 +177,12 @@ public sealed class FolderLockerTests : IDisposable
         provider.Connect(_folder);
         try
         {
-            var big = @"Fotos\vacaciones año 2025.jpg";
-            // Dos programas a la vez: una sola petición de contraseña y los dos reciben su archivo.
-            var reads = new[] { big, "nota.txt" }.Select(rel => Task.Run(() => File.ReadAllBytes(Path.Combine(_folder, rel)))).ToArray();
+            var big = @"Photos\holidays 2025 été.jpg";
+            // Two apps at once: a single password prompt and both get their file.
+            var reads = new[] { big, "note.txt" }.Select(rel => Task.Run(() => File.ReadAllBytes(Path.Combine(_folder, rel)))).ToArray();
             Assert.True(Task.WaitAll(reads, TimeSpan.FromSeconds(60)));
             Assert.Equal(files[big], reads[0].Result);
-            Assert.Equal(files["nota.txt"], reads[1].Result);
+            Assert.Equal(files["note.txt"], reads[1].Result);
             Assert.Equal(1, prompts);
             SpinWait.SpinUntil(() => !FolderLocker.IsLocked(_folder), TimeSpan.FromSeconds(30));
         }
@@ -185,14 +204,14 @@ public sealed class FolderLockerTests : IDisposable
         provider.Connect(_folder);
         try
         {
-            Assert.ThrowsAny<IOException>(() => File.ReadAllBytes(Path.Combine(_folder, "nota.txt")));
+            Assert.ThrowsAny<IOException>(() => File.ReadAllBytes(Path.Combine(_folder, "note.txt")));
         }
         finally
         {
             provider.Disconnect(_folder);
         }
         Assert.True(FolderLocker.IsLocked(_folder));
-        Assert.Equal(PlaceholderState.Dehydrated, CloudFiles.GetState(Path.Combine(_folder, "nota.txt")));
+        Assert.Equal(PlaceholderState.Dehydrated, CloudFiles.GetState(Path.Combine(_folder, "note.txt")));
 
         using var opened = FolderLocker.OpenKey(_folder, "x");
         FolderLocker.Unlock(_folder, opened);
@@ -204,17 +223,17 @@ public sealed class FolderLockerTests : IDisposable
     {
         var files = CreateSampleContent();
         using var key = KeyMaterial.Create("x", FastIterations);
-        var path = Path.Combine(_folder, "nota.txt");
+        var path = Path.Combine(_folder, "note.txt");
 
         LockResult result;
         using (new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.Read))
         {
             result = FolderLocker.Lock(_folder, key);
-            Assert.Equal(["nota.txt"], result.InUse);
+            Assert.Equal(["note.txt"], result.InUse);
             Assert.Equal(PlaceholderState.Hydrated, CloudFiles.GetState(path));
             Assert.False(CloudFiles.TryDehydrate(path));
         }
-        // En la práctica lo hace el agente, que está conectado a la carpeta.
+        // In practice the agent does it, since it is connected to the folder.
         using (CloudFiles.TryConnectForConversion(_folder))
             Assert.True(CloudFiles.TryDehydrate(path));
         Assert.Equal(PlaceholderState.Dehydrated, CloudFiles.GetState(path));
@@ -230,9 +249,9 @@ public sealed class FolderLockerTests : IDisposable
         var files = CreateSampleContent();
         using var key = KeyMaterial.Create("x", FastIterations);
         FolderLocker.Lock(_folder, key);
-        File.Move(Path.Combine(_folder, "nota.txt"), Path.Combine(_folder, "renombrada.txt"));
-        File.SetAttributes(Path.Combine(_folder, "solo lectura.txt"), FileAttributes.Normal);
-        File.Delete(Path.Combine(_folder, "solo lectura.txt"));
+        File.Move(Path.Combine(_folder, "note.txt"), Path.Combine(_folder, "renamed.txt"));
+        File.SetAttributes(Path.Combine(_folder, "read only.txt"), FileAttributes.Normal);
+        File.Delete(Path.Combine(_folder, "read only.txt"));
 
         using var opened = FolderLocker.OpenKey(_folder, "x");
         FolderLocker.Unlock(_folder, opened);
@@ -243,32 +262,32 @@ public sealed class FolderLockerTests : IDisposable
     public void WrongPassword_IsRejected_AndFolderStaysLocked()
     {
         CreateSampleContent();
-        using var key = KeyMaterial.Create("correcta", FastIterations);
+        using var key = KeyMaterial.Create("correct", FastIterations);
         FolderLocker.Lock(_folder, key);
 
-        Assert.Throws<WrongPasswordException>(() => FolderLocker.OpenKey(_folder, "incorrecta"));
-        Assert.Throws<WrongPasswordException>(() => FolderLocker.OpenKey(_folder, "Correcta"));
+        Assert.Throws<WrongPasswordException>(() => FolderLocker.OpenKey(_folder, "wrong"));
+        Assert.Throws<WrongPasswordException>(() => FolderLocker.OpenKey(_folder, "Correct"));
         Assert.True(FolderLocker.IsLocked(_folder));
-        using var _ = FolderLocker.OpenKey(_folder, "correcta");
+        using var _ = FolderLocker.OpenKey(_folder, "correct");
     }
 
     [Fact]
     public void Relock_WithSameKey_KeepsTheSamePassword()
     {
         var files = CreateSampleContent();
-        using var key = KeyMaterial.Create("misma", FastIterations);
+        using var key = KeyMaterial.Create("same", FastIterations);
         FolderLocker.Lock(_folder, key);
-        using (var opened = FolderLocker.OpenKey(_folder, "misma"))
+        using (var opened = FolderLocker.OpenKey(_folder, "same"))
             FolderLocker.Unlock(_folder, opened);
 
-        File.WriteAllText(Path.Combine(_folder, "nuevo.txt"), "añadido mientras estaba abierta");
+        File.WriteAllText(Path.Combine(_folder, "new.txt"), "added while it was open");
         var reloaded = KeyMaterial.FromParts(key.Envelope.ToArray(), key.DataKey.ToArray());
         FolderLocker.Lock(_folder, reloaded);
 
-        using var again = FolderLocker.OpenKey(_folder, "misma");
+        using var again = FolderLocker.OpenKey(_folder, "same");
         FolderLocker.Unlock(_folder, again);
-        Assert.Equal("añadido mientras estaba abierta", File.ReadAllText(Path.Combine(_folder, "nuevo.txt")));
-        Assert.Equal(files["nota.txt"], File.ReadAllBytes(Path.Combine(_folder, "nota.txt")));
+        Assert.Equal("added while it was open", File.ReadAllText(Path.Combine(_folder, "new.txt")));
+        Assert.Equal(files["note.txt"], File.ReadAllBytes(Path.Combine(_folder, "note.txt")));
     }
 
     [Fact]
@@ -276,7 +295,7 @@ public sealed class FolderLockerTests : IDisposable
     {
         var files = CreateSampleContent();
         using var key = KeyMaterial.Create("x", FastIterations);
-        using (new FileStream(Path.Combine(_folder, "nota.txt"), FileMode.Open, FileAccess.ReadWrite, FileShare.None))
+        using (new FileStream(Path.Combine(_folder, "note.txt"), FileMode.Open, FileAccess.ReadWrite, FileShare.None))
             Assert.ThrowsAny<IOException>(() => FolderLocker.Lock(_folder, key));
 
         Assert.False(FolderLocker.IsLocked(_folder));
@@ -293,8 +312,8 @@ public sealed class FolderLockerTests : IDisposable
         FolderLocker.Lock(_folder, key);
         var vault = Path.Combine(_folder, FolderLocker.VaultFileName);
         var bytes = File.ReadAllBytes(vault);
-        bytes[^100] ^= 0x01; // último bloque: algunos archivos ya se habrán restaurado
-        File.SetAttributes(vault, FileAttributes.Normal); // la bóveda está oculta y es de sistema
+        bytes[^100] ^= 0x01; // last chunk: some files will already have been restored
+        File.SetAttributes(vault, FileAttributes.Normal); // the vault is hidden and a system file
         File.WriteAllBytes(vault, bytes);
 
         using var opened = FolderLocker.OpenKey(_folder, "x");
@@ -302,7 +321,7 @@ public sealed class FolderLockerTests : IDisposable
 
         Assert.True(FolderLocker.IsLocked(_folder));
         Assert.True(CloudFiles.IsSyncRoot(_folder));
-        Assert.Equal(PlaceholderState.Dehydrated, CloudFiles.GetState(Path.Combine(_folder, "nota.txt")));
+        Assert.Equal(PlaceholderState.Dehydrated, CloudFiles.GetState(Path.Combine(_folder, "note.txt")));
         Assert.Empty(Directory.GetDirectories(_folder, ".doorman-*", new EnumerationOptions { AttributesToSkip = 0 }));
     }
 
@@ -349,15 +368,15 @@ public sealed class FolderLockerTests : IDisposable
     public void LockedIcon_DependsOnContent(bool withContent, string expectedIcon)
     {
         if (withContent)
-            File.WriteAllText(Path.Combine(_folder, "nota.txt"), "hola");
+            File.WriteAllText(Path.Combine(_folder, "note.txt"), "hello");
         using var key = KeyMaterial.Create("x", FastIterations);
         FolderLocker.Lock(_folder, key);
         var ini = File.ReadAllText(Path.Combine(_folder, "desktop.ini"));
         Assert.Contains(expectedIcon, ini);
-        // En las vistas grandes el Explorador usa el icono de la clase: cada caso lleva la suya.
+        // In large icon views Explorer uses the icon of the class: each case has its own.
         Assert.Contains($"CLSID={DoorMan.Shell.ShellIntegration.LockedClsid(withContent)}", ini);
 
-        // Al ponerse al día (agente), el icono no debe cambiar.
+        // When it is brought up to date (agent), the icon must not change.
         FolderLocker.RefreshLockedAppearance(_folder);
         Assert.Contains(expectedIcon, File.ReadAllText(Path.Combine(_folder, "desktop.ini")));
     }
@@ -365,15 +384,15 @@ public sealed class FolderLockerTests : IDisposable
     [Fact]
     public void SymbolicLinks_AreRefused()
     {
-        var target = Path.Combine(_root, "fuera");
+        var target = Path.Combine(_root, "outside");
         Directory.CreateDirectory(target);
         try
         {
-            Directory.CreateSymbolicLink(Path.Combine(_folder, "enlace"), target);
+            Directory.CreateSymbolicLink(Path.Combine(_folder, "link"), target);
         }
         catch (IOException)
         {
-            return; // Crear enlaces requiere el modo de desarrollador o privilegios de administrador.
+            return; // Creating links needs developer mode or administrator rights.
         }
         catch (UnauthorizedAccessException)
         {
@@ -406,7 +425,73 @@ public sealed class FolderRulesTests
     [Fact]
     public void Paths_AreComparedCaseInsensitively()
     {
-        Assert.True(PathUtil.IsSameOrInside(@"c:\datos\FOTOS\2024", @"C:\Datos\fotos"));
-        Assert.False(PathUtil.IsSameOrInside(@"C:\Datos\fotos2", @"C:\Datos\fotos"));
+        Assert.True(PathUtil.IsSameOrInside(@"c:\data\PHOTOS\2024", @"C:\Data\photos"));
+        Assert.False(PathUtil.IsSameOrInside(@"C:\Data\photos2", @"C:\Data\photos"));
+    }
+}
+
+public sealed class CommandLineTests
+{
+    [Fact]
+    public void ArgumentsOfEarlierVersions_AreStillAccepted()
+    {
+        Assert.Equal(["--open", @"C:\A b", "--window", "42"], Commands.NormalizeArguments(["--abrir", @"C:\A b", "--ventana", "42"]));
+        Assert.Equal(["--lock", @"C:\x"], Commands.NormalizeArguments(["--REBLOQUEAR", @"C:\x"]));
+        Assert.Equal(["--startup"], Commands.NormalizeArguments(["--inicio"]));
+        Assert.NotNull(Commands.FromArguments(["--proteger", @"C:\x"]));
+        Assert.NotNull(Commands.FromArguments(["--protect", @"C:\x"]));
+        Assert.Null(Commands.FromArguments(["--protect"]));
+    }
+}
+
+// Strings.Current is global: these tests cannot run alongside the others that show texts.
+[Collection("FolderLocker")]
+public sealed class StringsTests
+{
+    [Theory]
+    [InlineData("en-US", "English")]
+    [InlineData("es-CL", "Spanish")]
+    [InlineData("fr-CA", "French")]
+    [InlineData("zh-CN", "Chinese")]
+    [InlineData("zh-TW", "Chinese")]
+    [InlineData("hi-IN", "Hindi")]
+    [InlineData("de-DE", "English")]
+    public void Language_FollowsTheWindowsDisplayLanguage(string culture, string expected) =>
+        Assert.Equal(expected, Strings.FromCulture(new System.Globalization.CultureInfo(culture)).ToString());
+
+    /// <summary>Every text exists in every language and every format has as many placeholders as arguments.</summary>
+    [Fact]
+    public void EveryTextIsTranslated_AndFormatsAreValid()
+    {
+        var previous = Strings.Current;
+        try
+        {
+            var english = new Dictionary<string, string>();
+            foreach (var language in Enum.GetValues<Language>())
+            {
+                Strings.Current = language;
+                foreach (var method in typeof(Strings).GetMethods(System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Static))
+                {
+                    if (method.ReturnType != typeof(string))
+                        continue;
+                    var args = method.GetParameters()
+                        .Select(p => p.ParameterType == typeof(int) ? (object)7 : $"ARG{p.Position}").ToArray();
+                    var text = (string)method.Invoke(null, args)!;
+                    Assert.False(string.IsNullOrWhiteSpace(text), $"{method.Name} ({language})");
+                    for (int i = 0; i < args.Length; i++)
+                        Assert.Contains(args[i].ToString()!, text);
+                    Assert.DoesNotContain("{", text);
+                    if (language == Language.English)
+                        english[method.Name] = text;
+                    else if (method.Name is not ("get_OK" or "Quoted" or "AndMore"))
+                        Assert.True(text != english[method.Name] || text.All(c => c < 128 && !char.IsLetter(c)),
+                            $"{method.Name} is not translated to {language}");
+                }
+            }
+        }
+        finally
+        {
+            Strings.Current = previous;
+        }
     }
 }

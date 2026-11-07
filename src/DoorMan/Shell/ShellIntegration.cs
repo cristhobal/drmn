@@ -5,36 +5,42 @@ using Microsoft.Win32;
 namespace DoorMan.Shell;
 
 /// <summary>
-/// Integración con el Explorador mediante el registro del usuario actual (no requiere administrador):
+/// File Explorer integration through the current user's registry (no administrator rights needed):
 /// <list type="bullet">
-/// <item>«Proteger con contraseña» en el menú contextual de todas las carpetas.</item>
-/// <item>«Bloquear», solo en las carpetas desbloqueadas (filtrado con AppliesTo).</item>
-/// <item>«Desbloquear», solo en las carpetas bloqueadas.</item>
-/// <item>La extensión .doorman del archivo cifrado, que pide la contraseña al abrirlo: es lo que el
-/// usuario ve al entrar en una carpeta bloqueada.</item>
+/// <item>“Protect with password” in the context menu of every folder.</item>
+/// <item>“Lock”, only on unlocked folders (filtered with AppliesTo).</item>
+/// <item>“Unlock”, only on locked folders.</item>
+/// <item>The .doorman extension of the encrypted file, which asks for the password when opened.</item>
 /// </list>
-/// Nunca se cambia el verbo predeterminado de las carpetas: es un ajuste global y, en las carpetas
-/// especiales (Imágenes, Documentos…), dejaba el Explorador sin poder abrirlas.
-/// AppliesTo compara con System.ParsingPath, porque System.ItemPathDisplay está traducido
-/// («C:\Usuarios\…\Imágenes») y no coincide con la ruta real.
+/// The default verb of folders is never changed: it is a global setting and, on special folders (Pictures,
+/// Documents…), it left Explorer unable to open them.
+/// AppliesTo compares with System.ParsingPath, because System.ItemPathDisplay is localized
+/// (“C:\Usuarios\…\Imágenes”) and does not match the real path.
 /// </summary>
 internal static class ShellIntegration
 {
     const string DirectoryShell = @"Software\Classes\Directory\shell";
-    const string ProtectVerb = "DoorMan.Proteger";
-    const string RelockVerb = "DoorMan.Rebloquear";
-    const string OpenVerb = "DoorMan.Abrir";
-    const string ProgId = "DoorMan.Boveda";
+    const string ProtectVerb = "DoorMan.Protect";
+    const string RelockVerb = "DoorMan.Lock";
+    const string OpenVerb = "DoorMan.Unlock";
+    const string ProgId = "DoorMan.Vault";
+    /// <summary>Registry keys of versions before 3.0, removed when registering.</summary>
+    static readonly string[] LegacyKeys =
+    [
+        $@"{DirectoryShell}\DoorMan.Proteger",
+        $@"{DirectoryShell}\DoorMan.Rebloquear",
+        $@"{DirectoryShell}\DoorMan.Abrir",
+        @"Software\Classes\DoorMan.Boveda",
+    ];
 
     /// <summary>
-    /// Clase de la extensión nativa (DoorManShell.dll). El desktop.ini de las carpetas
-    /// bloqueadas la referencia, y el Explorador pide la contraseña antes de mostrar su contenido.
+    /// Class of the native extension (DoorManShell.dll). The desktop.ini of locked folders refers to it, so
+    /// Explorer asks for the password before showing their content.
     /// </summary>
     public const string LockedFolderClsid = "{142BC879-C3C7-4D93-B1E6-51CF20CC661E}";
     /// <summary>
-    /// La misma clase para las carpetas bloqueadas con contenido. En las vistas grandes el Explorador
-    /// muestra el icono registrado para la clase (DefaultIcon) y no el del desktop.ini, así que cada
-    /// icono necesita su propia clase.
+    /// The same class for locked folders with content. In large icon views Explorer shows the icon registered for
+    /// the class (DefaultIcon) rather than the one in desktop.ini, so each icon needs its own class.
     /// </summary>
     public const string LockedFilledFolderClsid = "{4FB75F15-2E04-47FB-8F21-40CE81A144A5}";
     public const string ExtensionFileName = "DoorManShell.dll";
@@ -43,7 +49,6 @@ internal static class ShellIntegration
     static string ClsidKey(bool hasContent) => @"Software\Classes\CLSID\" + LockedClsid(hasContent);
 
     static string ExePath => Environment.ProcessPath!;
-    static string LockIcon => AppIcons.LockResource;
 
     public static bool IsRegistered
     {
@@ -55,11 +60,12 @@ internal static class ShellIntegration
     }
 
     const string SettingsKey = @"Software\DoorMan";
-    const string PackagedMenuValue = "MenuWindows11";
+    const string PackagedMenuValue = "PackagedMenu";
+    const string LegacyPackagedMenuValue = "MenuWindows11";
 
     /// <summary>
-    /// Si el paquete del menú de Windows 11 está instalado (ContextMenuPackage), su comando aparece en los dos
-    /// menús, el moderno y «Mostrar más opciones»: las opciones del registro saldrían repetidas (ver Refresh).
+    /// Whether the Windows 11 context menu package is installed (ContextMenuPackage). Its command shows up in both
+    /// menus, the modern one and “Show more options”, so the registry entries would be repeated (see Refresh).
     /// </summary>
     public static bool UsesPackagedMenu
     {
@@ -71,6 +77,7 @@ internal static class ShellIntegration
         set
         {
             using var key = Registry.CurrentUser.CreateSubKey(SettingsKey);
+            key.DeleteValue(LegacyPackagedMenuValue, throwOnMissingValue: false);
             if (value)
                 key.SetValue(PackagedMenuValue, 1, RegistryValueKind.DWord);
             else
@@ -80,20 +87,22 @@ internal static class ShellIntegration
 
     public static void Register()
     {
+        foreach (var legacy in LegacyKeys)
+            Registry.CurrentUser.DeleteSubKeyTree(legacy, throwOnMissingSubKey: false);
         if (!UsesPackagedMenu)
-            WriteVerb(ProtectVerb, "Proteger con contraseña", "--proteger", AppIcons.ProtectResource, appliesTo: null);
+            WriteVerb(ProtectVerb, Strings.ProtectWithPassword, "--protect", AppIcons.ProtectResource, appliesTo: null);
 
         using (var ext = Registry.CurrentUser.CreateSubKey($@"Software\Classes\{FolderLocker.VaultExtension}"))
             ext.SetValue("", ProgId);
         using (var prog = Registry.CurrentUser.CreateSubKey($@"Software\Classes\{ProgId}"))
         {
-            prog.SetValue("", "Carpeta protegida con contraseña");
+            prog.SetValue("", Strings.ProtectedFolderType);
             using (var icon = prog.CreateSubKey("DefaultIcon"))
-                icon.SetValue("", LockIcon);
+                icon.SetValue("", AppIcons.LockResource);
             using (var open = prog.CreateSubKey(@"shell\open"))
-                open.SetValue("", "Abrir carpeta protegida");
+                open.SetValue("", Strings.OpenProtectedFolder);
             using var cmd = prog.CreateSubKey(@"shell\open\command");
-            cmd.SetValue("", $"\"{ExePath}\" --abrir \"%1\"");
+            cmd.SetValue("", $"\"{ExePath}\" --open \"%1\"");
         }
 
         var extension = Path.Combine(Path.GetDirectoryName(ExePath)!, ExtensionFileName);
@@ -123,12 +132,14 @@ internal static class ShellIntegration
         Registry.CurrentUser.DeleteSubKeyTree($@"Software\Classes\{ProgId}", throwOnMissingSubKey: false);
         Registry.CurrentUser.DeleteSubKeyTree(ClsidKey(hasContent: false), throwOnMissingSubKey: false);
         Registry.CurrentUser.DeleteSubKeyTree(ClsidKey(hasContent: true), throwOnMissingSubKey: false);
+        foreach (var legacy in LegacyKeys)
+            Registry.CurrentUser.DeleteSubKeyTree(legacy, throwOnMissingSubKey: false);
         ShellNotify.AssociationsChanged();
     }
 
     /// <summary>
-    /// Ajusta el menú contextual a la lista actual de carpetas: «Proteger con contraseña» solo en las
-    /// que no están protegidas, «Desbloquear» en las bloqueadas y «Bloquear» en las desbloqueadas.
+    /// Adjusts the context menu to the current list of folders: “Protect with password” only on folders that are
+    /// not protected, “Unlock” on locked ones and “Lock” on unlocked ones.
     /// </summary>
     public static void Refresh(IReadOnlyCollection<ProtectedFolder> folders)
     {
@@ -138,48 +149,50 @@ internal static class ShellIntegration
         var unlocked = folders.Where(f => !f.Locked).Select(f => f.Path).ToList();
         WriteUnlockedList(unlocked);
 
-        // Con el paquete, «Proteger» y «Bloquear» los da su comando. Las carpetas bloqueadas son la excepción:
-        // su desktop.ini las asocia a la extensión de DoorMan y Windows no les muestra ningún comando de
-        // paquete, así que «Desbloquear» sigue en el registro (en «Mostrar más opciones», sin repetirse).
+        // With the package, “Protect” and “Lock” come from its command. Locked folders are the exception: their
+        // desktop.ini ties them to DoorMan's extension and Windows shows them no packaged commands, so “Unlock”
+        // stays in the registry (under “Show more options”, without being repeated).
         var packaged = UsesPackagedMenu;
         if (packaged)
             Registry.CurrentUser.DeleteSubKeyTree($@"{DirectoryShell}\{ProtectVerb}", throwOnMissingSubKey: false);
         else if (IsRegistered)
-            WriteVerb(ProtectVerb, "Proteger con contraseña", "--proteger", AppIcons.ProtectResource,
+            WriteVerb(ProtectVerb, Strings.ProtectWithPassword, "--protect", AppIcons.ProtectResource,
                 folders.Count > 0 ? AppliesToAllExcept(folders.Select(f => f.Path)) : null);
 
         if (unlocked.Count > 0 && !packaged)
-            WriteVerb(RelockVerb, "Bloquear", "--rebloquear", AppIcons.RelockResource, AppliesToAny(unlocked));
+            WriteVerb(RelockVerb, Strings.LockVerb, "--lock", AppIcons.RelockResource, AppliesToAny(unlocked));
         else
             Registry.CurrentUser.DeleteSubKeyTree($@"{DirectoryShell}\{RelockVerb}", throwOnMissingSubKey: false);
 
         if (locked.Count > 0)
-            WriteVerb(OpenVerb, "Desbloquear", "--abrir", AppIcons.UnlockResource, AppliesToAny(locked));
+            WriteVerb(OpenVerb, Strings.UnlockVerb, "--open", AppIcons.UnlockResource, AppliesToAny(locked));
         else
             Registry.CurrentUser.DeleteSubKeyTree($@"{DirectoryShell}\{OpenVerb}", throwOnMissingSubKey: false);
     }
 
+    static string DataDir => Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "DoorMan");
+    static string UnlockedListPath => Path.Combine(DataDir, "unlocked.txt");
+    const string LegacyUnlockedListName = "desbloqueadas.txt";
+
     /// <summary>
-    /// El menú contextual de Windows 11 (MenuCommand, en DoorManShell.dll) reconoce las carpetas bloqueadas por
-    /// su archivo cifrado; las desbloqueadas, por esta lista (una ruta por línea, UTF-8).
+    /// The Windows 11 context menu (MenuCommand, in DoorManShell.dll) recognizes locked folders by their
+    /// encrypted file, and unlocked ones by this list (one path per line, UTF-8).
     /// </summary>
     static void WriteUnlockedList(IEnumerable<string> unlocked)
     {
         try
         {
-            Directory.CreateDirectory(Path.GetDirectoryName(UnlockedListPath)!);
+            Directory.CreateDirectory(DataDir);
             var tmp = UnlockedListPath + ".tmp";
             File.WriteAllLines(tmp, unlocked, new System.Text.UTF8Encoding(encoderShouldEmitUTF8Identifier: false));
             File.Move(tmp, UnlockedListPath, overwrite: true);
+            File.Delete(Path.Combine(DataDir, LegacyUnlockedListName));
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
         {
-            // Solo afecta al texto del menú de Windows 11; se reescribe en el próximo cambio.
+            // It only affects the Windows 11 menu text; it is written again on the next change.
         }
     }
-
-    static string UnlockedListPath => Path.Combine(
-        Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "DoorMan", "desbloqueadas.txt");
 
     static void WriteVerb(string verb, string text, string argument, string icon, string? appliesTo)
     {
@@ -253,8 +266,8 @@ internal static class ShellNotify
     static extern int SHGetSetFolderCustomSettings(ref SHFOLDERCUSTOMSETTINGS settings, string path, uint readWrite);
 
     /// <summary>
-    /// Escribe el icono y la descripción de la carpeta con la función oficial del shell. A diferencia
-    /// de editar desktop.ini a mano, invalida la caché del Explorador y el icono cambia al momento.
+    /// Writes the folder icon and description with the official shell function. Unlike editing desktop.ini by
+    /// hand, it invalidates Explorer's cache and the icon changes right away.
     /// </summary>
     public static void SetFolderIcon(string folder, (string File, int Index) icon, string infoTip)
     {
@@ -271,8 +284,8 @@ internal static class ShellNotify
     }
 
     /// <summary>
-    /// Quita el icono y la descripción personalizados con la función del shell, para que el
-    /// Explorador olvide el que tenía en caché y vuelva a mostrar el icono normal de Windows.
+    /// Removes the custom icon and description with the shell function, so that Explorer forgets the cached one
+    /// and shows the normal Windows icon again.
     /// </summary>
     public static void ClearFolderIcon(string folder)
     {

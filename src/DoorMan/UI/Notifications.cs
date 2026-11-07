@@ -1,13 +1,13 @@
 namespace DoorMan.UI;
 
 /// <summary>
-/// Notificaciones nativas de Windows (las del área de notificaciones, que Windows 10/11 muestra como
-/// avisos del sistema). Se usan solo para errores y advertencias: el resultado normal ya se ve en el
-/// icono de la carpeta y no necesita ningún mensaje.
+/// Native Windows notifications (the notification area ones, which Windows 10/11 show as system notifications).
+/// They are only used for errors and warnings: the normal result is already visible in the folder icon and needs no
+/// message.
 /// </summary>
 internal static class Notifications
 {
-    // Límites de Windows para el título y el texto de la notificación.
+    // Windows limits for the notification title and text.
     const int MaxTitle = 63;
     const int MaxText = 255;
     const int VisibleMilliseconds = 8000;
@@ -19,9 +19,9 @@ internal static class Notifications
     public static void Info(string title, string text) => Show(title, text, ToolTipIcon.Info);
 
     /// <summary>
-    /// Muestra la notificación y la retira cuando se cierra (o a los pocos segundos). Fuera del agente
-    /// espera hasta entonces, porque el proceso termina justo después y, al quitar su icono, Windows
-    /// retiraría también la notificación. En el agente no espera: su bucle de mensajes sigue en marcha.
+    /// Shows the notification and removes it when it is closed (or after a few seconds). Outside the agent it waits
+    /// until then, because the process ends right after and, when its icon is removed, Windows would remove the
+    /// notification too. In the agent it does not wait: its message loop keeps running.
     /// </summary>
     static void Show(string title, string text, ToolTipIcon icon)
     {

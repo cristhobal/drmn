@@ -9,23 +9,47 @@ using DoorMan.UI;
 namespace DoorMan;
 
 /// <summary>
-/// Las acciones del menú contextual del Explorador. Normalmente las ejecuta el agente en segundo
-/// plano (<see cref="AgentHost"/>), que es quien atiende a los programas que abren archivos de las
-/// carpetas bloqueadas.
+/// The File Explorer context menu actions. They are normally carried out by the background agent
+/// (<see cref="AgentHost"/>), which is also the one serving apps that open files of locked folders.
 /// </summary>
 internal static class Commands
 {
-    /// <summary>La acción que corresponde a los argumentos de la línea de órdenes, o <c>null</c> si no son válidos.</summary>
-    public static Action? FromArguments(string[] args) => args switch
+    /// <summary>
+    /// Arguments of versions before 3.0, which were in Spanish. They are still accepted because the registry of an
+    /// earlier installation and an earlier Explorer extension (loaded until Explorer restarts) keep using them.
+    /// </summary>
+    static readonly Dictionary<string, string> LegacyArguments = new(StringComparer.OrdinalIgnoreCase)
     {
-        ["--proteger", var path] => () => Protect(path),
-        ["--abrir", var path] => () => Open(path),
-        ["--abrir", var path, "--ventana", var w] when long.TryParse(w, out var window) => () => Open(path, new IntPtr(window)),
-        ["--rebloquear", var path] => () => Relock(path),
+        ["--proteger"] = "--protect",
+        ["--abrir"] = "--open",
+        ["--ventana"] = "--window",
+        ["--rebloquear"] = "--lock",
+        ["--instalar"] = "--install",
+        ["--desinstalar"] = "--uninstall",
+        ["--registrar"] = "--register",
+        ["--desregistrar"] = "--unregister",
+        ["--inicio"] = "--startup",
+        ["--agente"] = "--agent",
+        ["--confiar-certificado"] = "--trust-certificate",
+    };
+
+    /// <summary>Options in lowercase and in their current names; other arguments (paths) unchanged.</summary>
+    public static string[] NormalizeArguments(string[] args) =>
+        args.Select(a => !a.StartsWith("--", StringComparison.Ordinal) ? a
+            : LegacyArguments.TryGetValue(a, out var current) ? current
+            : a.ToLowerInvariant()).ToArray();
+
+    /// <summary>The action for the command-line arguments, or <c>null</c> if they are not valid.</summary>
+    public static Action? FromArguments(string[] args) => NormalizeArguments(args) switch
+    {
+        ["--protect", var path] => () => Protect(path),
+        ["--open", var path] => () => Open(path),
+        ["--open", var path, "--window", var w] when long.TryParse(w, out var window) => () => Open(path, new IntPtr(window)),
+        ["--lock", var path] => () => Relock(path),
         _ => null,
     };
 
-    /// <summary>«Proteger con contraseña».</summary>
+    /// <summary>“Protect with password”.</summary>
     public static void Protect(string path, string? note = null)
     {
         var folder = PathUtil.Normalize(path);
@@ -35,7 +59,7 @@ internal static class Commands
 
         if (FolderLocker.IsLocked(folder))
         {
-            Notifications.Info("Esta carpeta ya está protegida", "Ábrela con doble clic para escribir su contraseña.");
+            Notifications.Info(Strings.AlreadyProtectedTitle, Strings.DoubleClickToOpen);
             return;
         }
         FolderRules.EnsureCanProtect(folder);
@@ -49,7 +73,7 @@ internal static class Commands
         }
 
         ExplorerWindows.LeaveFolder(folder);
-        var result = ProgressForm.Run("Proteger con contraseña", $"Cifrando «{DisplayName(folder)}»…", progress =>
+        var result = ProgressForm.Run(Strings.ProtectWithPassword, Strings.Encrypting(DisplayName(folder)), progress =>
         {
             using var key = KeyMaterial.Create(password);
             return FolderLocker.Lock(folder, key, progress);
@@ -58,8 +82,8 @@ internal static class Commands
     }
 
     /// <summary>
-    /// Doble clic sobre una carpeta bloqueada (la extensión del Explorador cancela la entrada y llama aquí),
-    /// «Abrir carpeta protegida» o su archivo .doorman: pide la contraseña y muestra la carpeta.
+    /// Double-clicking a locked folder (the Explorer extension cancels the navigation and calls this), “Unlock”
+    /// or opening its .doorman file: asks for the password and shows the folder.
     /// </summary>
     public static void Open(string path, IntPtr window = default)
     {
@@ -69,7 +93,7 @@ internal static class Commands
 
         if (!FolderLocker.IsLocked(folder))
         {
-            // Ya no está bloqueada (p. ej. se desbloqueó desde otra ventana): se abre sin más.
+            // No longer locked (for example, it was unlocked from another window): just open it.
             AppState.Sync();
             if (Directory.Exists(folder))
                 ExplorerWindows.Show(folder, window);
@@ -77,24 +101,23 @@ internal static class Commands
         }
         UnlockSession? session = null;
         if (AgentHost.Current is { } agent && (session = agent.Provider.BeginSession(folder)) is null)
-            return; // Ya se está pidiendo la contraseña de esta carpeta.
+            return; // The password of this folder is already being asked for.
         if (TryUnlock(folder, session))
             ExplorerWindows.Show(folder, window);
     }
 
     /// <summary>
-    /// Un programa intenta leer un archivo de una carpeta bloqueada: se pide la contraseña y, si es
-    /// correcta, la carpeta se desbloquea y el programa recibe el archivo. No se abre ninguna ventana
-    /// del Explorador.
+    /// An app tries to read a file of a locked folder: the password is asked for and, if it is correct, the folder
+    /// is unlocked and the app gets the file. No Explorer window is opened.
     /// </summary>
     public static void UnlockForProgram(string folder, UnlockSession session) => TryUnlock(folder, session);
 
-    /// <summary>Pide la contraseña y descifra la carpeta.</summary>
+    /// <summary>Asks for the password and decrypts the folder.</summary>
     /// <param name="session">
-    /// Los programas que esperan algún archivo de la carpeta (solo en el agente). Se cierra al
-    /// terminar, se desbloquee o no.
+    /// The apps waiting for some file of the folder (only in the agent). It is closed at the end, whether the
+    /// folder was unlocked or not.
     /// </param>
-    /// <returns><c>true</c> si la carpeta ha quedado desbloqueada.</returns>
+    /// <returns><c>true</c> if the folder is now unlocked.</returns>
     static bool TryUnlock(string folder, UnlockSession? session)
     {
         bool unlocked = false;
@@ -114,7 +137,7 @@ internal static class Commands
 
             using (key)
             {
-                ProgressForm.Run("DoorMan", $"Descifrando «{DisplayName(folder)}»…", progress =>
+                ProgressForm.Run("DoorMan", Strings.Decrypting(DisplayName(folder)), progress =>
                 {
                     FolderLocker.Unlock(folder, key, progress, session is null ? null : session.Extracted);
                     return true;
@@ -130,7 +153,7 @@ internal static class Commands
         }
     }
 
-    /// <summary>«Volver a bloquear»: usa la misma contraseña, guardada mientras la carpeta está abierta.</summary>
+    /// <summary>“Lock”: uses the same password, kept while the folder is unlocked.</summary>
     public static void Relock(string path)
     {
         var folder = PathUtil.Normalize(path);
@@ -141,7 +164,7 @@ internal static class Commands
                 return;
             if (FolderLocker.IsLocked(folder))
             {
-                Notifications.Info("Esta carpeta ya está bloqueada", "Ábrela con doble clic para escribir su contraseña.");
+                Notifications.Info(Strings.AlreadyLockedTitle, Strings.DoubleClickToOpen);
                 return;
             }
             FolderRules.EnsureCanProtect(folder);
@@ -152,7 +175,7 @@ internal static class Commands
                 using (key)
                 {
                     ExplorerWindows.LeaveFolder(folder);
-                    var result = ProgressForm.Run("Volver a bloquear", $"Cifrando «{DisplayName(folder)}»…",
+                    var result = ProgressForm.Run(Strings.LockVerb, Strings.Encrypting(DisplayName(folder)),
                         progress => FolderLocker.Lock(folder, key, progress));
                     AfterLock(folder, result);
                 }
@@ -160,8 +183,8 @@ internal static class Commands
             }
         }
 
-        // Sin la clave guardada (otro usuario de Windows, carpeta movida…) hay que elegir contraseña.
-        Protect(folder, "No se ha encontrado la contraseña anterior de esta carpeta. Elige una contraseña para volver a bloquearla.");
+        // Without the stored key (another Windows user, the folder was moved…) a password has to be chosen.
+        Protect(folder, Strings.PreviousPasswordNotFound);
     }
 
     static void AfterLock(string folder, LockResult result)
@@ -174,30 +197,28 @@ internal static class Commands
     }
 
     /// <summary>
-    /// Si todo ha ido bien no se muestra nada: el icono de la carpeta ya indica que está bloqueada.
-    /// Solo se avisa si quedaron archivos abiertos o sin borrar.
+    /// If everything went well nothing is shown: the folder icon already says it is locked. There is only a
+    /// warning when files were left open or could not be removed.
     /// </summary>
     static void ReportLocked(string folder, LockResult result)
     {
         if (result.NotDeleted.Count > 0)
-            Notifications.Warning("Quedan elementos sin eliminar",
-                $"«{DisplayName(folder)}» está cifrada, pero {Describe(result.NotDeleted)} estaba(n) en uso. Ciérralo(s) y elimínalo(s) a mano.");
+            Notifications.Warning(Strings.NotDeletedTitle, Strings.NotDeletedText(DisplayName(folder), Describe(result.NotDeleted)));
         else if (result.InUse.Count > 0)
-            Notifications.Warning("Hay archivos abiertos",
-                $"«{DisplayName(folder)}» está cifrada, pero {Describe(result.InUse)} está(n) abierto(s). Su contenido se quitará en cuanto lo(s) cierres.");
+            Notifications.Warning(Strings.OpenFilesTitle, Strings.OpenFilesText(DisplayName(folder), Describe(result.InUse)));
     }
 
     static string Describe(IReadOnlyList<string> items)
     {
-        var first = $"«{Path.GetFileName(items[0].TrimEnd('\\'))}»";
-        return items.Count > 1 ? $"{first} y {items.Count - 1} elemento(s) más" : first;
+        var first = Strings.Quoted(Path.GetFileName(items[0].TrimEnd('\\')));
+        return items.Count > 1 ? Strings.AndMore(first, items.Count - 1) : first;
     }
 
     static string DisplayName(string folder) => Path.GetFileName(folder) is { Length: > 0 } name ? name : folder;
 
     /// <summary>
-    /// Evita que dos ventanas trabajen a la vez sobre la misma carpeta (p. ej. por un doble clic
-    /// repetido), dentro del agente y entre procesos.
+    /// Keeps two windows from working on the same folder at once (for example, after a repeated double-click),
+    /// both inside the agent and across processes.
     /// </summary>
     sealed class FolderGuard : IDisposable
     {
@@ -209,7 +230,7 @@ internal static class Commands
 
         public static FolderGuard? TryAcquire(string folder)
         {
-            // El mutex no basta dentro del agente: el mismo hilo puede volver a entrar mientras muestra una ventana.
+            // The mutex is not enough inside the agent: the same thread can re-enter while it shows a window.
             lock (Busy)
                 if (!Busy.Add(folder))
                     return null;

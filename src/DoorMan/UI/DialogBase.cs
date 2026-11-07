@@ -1,8 +1,8 @@
 namespace DoorMan.UI;
 
 /// <summary>
-/// Diálogo con el aspecto de los de Windows: zona blanca con la instrucción principal en azul
-/// y franja inferior gris con los botones alineados a la derecha.
+/// Dialog that looks like the Windows ones: a white area with the main instruction in blue and a gray bottom strip
+/// with the buttons aligned to the right.
 /// </summary>
 internal class DialogBase : Form
 {
@@ -66,7 +66,7 @@ internal class DialogBase : Form
     protected override void OnShown(EventArgs e)
     {
         base.OnShown(e);
-        // Puede abrirse desde el proceso en segundo plano, que Windows no deja pasar al frente por sí solo.
+        // It may be opened by the background process, which Windows does not let come to the front by itself.
         Shell.ForegroundHelper.Bring(Handle);
         Activate();
     }
@@ -103,7 +103,7 @@ internal class DialogBase : Form
         });
     }
 
-    /// <summary>Etiqueta de error en rojo que reserva su espacio aunque esté vacía.</summary>
+    /// <summary>Red error label that keeps its space even when empty.</summary>
     protected Label AddErrorLabel() => AddRow(new Label
     {
         AutoSize = true,
@@ -114,7 +114,7 @@ internal class DialogBase : Form
         UseMnemonic = false,
     });
 
-    /// <summary>Añade botones de derecha a izquierda: el primero queda en el extremo derecho.</summary>
+    /// <summary>Adds buttons from right to left: the first one ends up on the far right.</summary>
     protected Button AddButton(string text, DialogResult result = DialogResult.None)
     {
         var button = new Button
@@ -133,7 +133,7 @@ internal class DialogBase : Form
 
     protected T AddRow<T>(T control) where T : Control
     {
-        // Posición explícita: la colocación automática de TableLayoutPanel desordena las filas.
+        // Explicit position: the automatic placement of TableLayoutPanel mixes up the rows.
         int row = Content.RowCount;
         Content.RowCount = row + 1;
         Content.RowStyles.Add(new RowStyle(SizeType.AutoSize));

@@ -6,21 +6,24 @@ using System.Text;
 namespace DoorMan.Shell;
 
 /// <summary>
-/// La opción de DoorMan en el menú contextual moderno de Windows 11. Ese menú solo muestra comandos de
-/// aplicaciones con identidad de paquete, así que se instala un paquete disperso (DoorMan.msix) que apunta a
-/// la carpeta de instalación y declara MenuCommand de DoorManShell.dll. Las opciones del registro
-/// (ShellIntegration) siguen en «Mostrar más opciones» y en Windows 10.
+/// DoorMan's option in the modern Windows 11 context menu. That menu only shows commands of apps with package
+/// identity, so a sparse package (DoorMan.msix) is installed that points to the install folder and declares
+/// MenuCommand from DoorManShell.dll. The registry entries (ShellIntegration) are still used under “Show more
+/// options” and on Windows 10.
 /// <para>
-/// Windows exige que el paquete esté firmado con un certificado de confianza para todo el equipo: añadirlo
-/// pide permisos de administrador (UAC) una vez por versión. El certificado se genera al publicar y su clave
-/// privada se destruye tras firmar (herramientas\generar-paquete.ps1).
+/// Windows requires the package to be signed with a certificate trusted by the whole machine: adding it needs
+/// administrator rights (UAC) once per version. The certificate is created when publishing and its private key is
+/// destroyed right after signing.
 /// </para>
 /// </summary>
 internal static class ContextMenuPackage
 {
     public const string PackageFileName = "DoorMan.msix";
     public const string CertificateFileName = "DoorMan.cer";
-    const string PackageName = "DoorMan.MenuContextual";
+    const string PackageName = "DoorMan.ContextMenu";
+    /// <summary>Package and certificate names of versions before 3.0, removed when installing.</summary>
+    const string LegacyPackageName = "DoorMan.MenuContextual";
+    const string LegacyCertificateSubject = "CN=DoorMan Paquete Local";
     const int ErrorCancelled = 1223;
 
     public static bool IsSupported => Environment.OSVersion.Version.Build >= 22000;
@@ -29,14 +32,14 @@ internal static class ContextMenuPackage
     static extern bool AllowSetForegroundWindow(int processId);
 
     /// <summary>
-    /// Cede el primer plano al proceso que se lance a continuación. Sin esto, el aviso de UAC de un proceso
-    /// lanzado en segundo plano aparece minimizado en la barra de tareas y es fácil no verlo.
+    /// Lets the next process started come to the foreground. Without this, the UAC prompt of a process started in
+    /// the background shows up minimized in the taskbar and is easy to miss.
     /// </summary>
     public static void AllowNextProcessForeground() => AllowSetForegroundWindow(-1); // ASFW_ANY
 
-    /// <summary>Confía en el certificado (con UAC si hace falta) y registra el paquete para el usuario actual.</summary>
-    /// <returns>Si el paquete ha quedado instalado. Si no, <paramref name="warning"/> explica el motivo cuando
-    /// hay que avisar al usuario (es null en Windows 10 o si no hay paquete).</returns>
+    /// <summary>Trusts the certificate (with UAC if needed) and registers the package for the current user.</summary>
+    /// <returns>Whether the package is installed. If not, <paramref name="warning"/> explains why when the user
+    /// should be told (it is null on Windows 10 or when there is no package).</returns>
     public static bool Install(string installDir, string exePath, out string? warning)
     {
         warning = TryInstall(installDir, exePath, out var installed);
@@ -56,7 +59,7 @@ internal static class ContextMenuPackage
             try
             {
                 AllowNextProcessForeground();
-                using var elevated = Process.Start(new ProcessStartInfo(exePath, $"--confiar-certificado \"{certificate}\"")
+                using var elevated = Process.Start(new ProcessStartInfo(exePath, $"--trust-certificate \"{certificate}\"")
                 {
                     UseShellExecute = true,
                     Verb = "runas",
@@ -65,28 +68,31 @@ internal static class ContextMenuPackage
             }
             catch (Win32Exception ex) when (ex.NativeErrorCode == ErrorCancelled)
             {
-                return "No se concedieron permisos de administrador: las opciones de DoorMan seguirán en «Mostrar más opciones».";
+                return Strings.PackageUacDeclined;
             }
             if (!IsTrusted(certificate))
-                return "No se pudo añadir el certificado de DoorMan: las opciones seguirán en «Mostrar más opciones».";
+                return Strings.PackageCertificateFailed;
         }
 
         var error = RunPowerShell(
-            $"Get-AppxPackage -Name '{PackageName}' | Remove-AppxPackage; " +
+            RemovePackagesScript + "; " +
             $"Add-AppxPackage -Path {Quote(package)} -ExternalLocation {Quote(installDir)}");
         installed = error is null;
-        return error is null ? null : $"No se pudo registrar el menú contextual de Windows 11: {error}";
+        return error is null ? null : Strings.PackageFailed(error);
     }
 
     public static void Uninstall()
     {
         if (IsSupported)
-            RunPowerShell($"Get-AppxPackage -Name '{PackageName}' | Remove-AppxPackage");
+            RunPowerShell(RemovePackagesScript);
     }
 
+    static string RemovePackagesScript =>
+        $"Get-AppxPackage | Where-Object {{ $_.Name -in '{PackageName}', '{LegacyPackageName}' }} | Remove-AppxPackage";
+
     /// <summary>
-    /// Ejecutado con permisos de administrador: añade el certificado a «Personas de confianza» del equipo y
-    /// quita los de versiones anteriores de DoorMan (mismo sujeto), cuya clave ya no existe.
+    /// Run with administrator rights: adds the certificate to the machine's “Trusted People” and removes those of
+    /// earlier DoorMan versions, whose private key no longer exists.
     /// </summary>
     public static void TrustCertificate(string certificatePath)
     {
@@ -97,7 +103,8 @@ internal static class ContextMenuPackage
         {
             using (old)
             {
-                if (old.Subject == certificate.Subject && old.Thumbprint != certificate.Thumbprint)
+                if ((old.Subject == certificate.Subject || old.Subject == LegacyCertificateSubject)
+                    && old.Thumbprint != certificate.Thumbprint)
                     store.Remove(old);
             }
         }
@@ -123,7 +130,7 @@ internal static class ContextMenuPackage
 
     static string Quote(string value) => "'" + value.Replace("'", "''") + "'";
 
-    /// <returns>Null si ha ido bien; si no, el mensaje de error.</returns>
+    /// <returns>Null on success; otherwise, the error message.</returns>
     static string? RunPowerShell(string script)
     {
         var encoded = Convert.ToBase64String(Encoding.Unicode.GetBytes("$ErrorActionPreference = 'Stop'; " + script));
@@ -143,7 +150,7 @@ internal static class ContextMenuPackage
             var error = process.StandardError.ReadToEnd();
             output.Wait();
             process.WaitForExit();
-            return process.ExitCode == 0 ? null : (error.Trim() is { Length: > 0 } e ? e : $"código {process.ExitCode}");
+            return process.ExitCode == 0 ? null : (error.Trim() is { Length: > 0 } e ? e : $"exit code {process.ExitCode}");
         }
         catch (Exception ex) when (ex is Win32Exception or InvalidOperationException)
         {

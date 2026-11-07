@@ -1,16 +1,14 @@
-// Extensión de shell de DoorMan.
+// DoorMan shell extension.
 //
-// Las carpetas bloqueadas llevan en su desktop.ini «CLSID={142BC879-…}», así que el Explorador
-// las abre a través de esta clase (igual que hace con C:\Windows\Fonts). Mientras la carpeta está
-// bloqueada no expone ningún contenido y, cuando el Explorador intenta mostrarla (CreateViewObject),
-// cancela la navegación y lanza DoorMan.exe para pedir la contraseña. Si la carpeta ya no
-// está bloqueada, todo se delega en la carpeta normal del sistema de archivos.
+// Locked folders have "CLSID={142BC879-…}" in their desktop.ini, so File Explorer opens them through this class (as
+// it does with C:\Windows\Fonts). While the folder is locked it exposes no content and, when Explorer tries to show
+// it (CreateViewObject), it cancels the navigation and starts DoorMan.exe to ask for the password. Once the folder
+// is no longer locked, everything is forwarded to the normal file system folder.
 //
-// También aporta la opción del menú contextual moderno de Windows 11 (MenuCommand), que muestra
-// «Proteger con contraseña», «Bloquear» o «Desbloquear» según la carpeta.
+// It also provides DoorMan's option in the modern Windows 11 context menu (MenuCommand), which shows "Protect with
+// password", "Lock" or "Unlock" depending on the folder.
 //
-// Se mantiene deliberadamente mínima: corre dentro de explorer.exe, y toda la interfaz y el
-// cifrado viven en el ejecutable.
+// It is deliberately minimal: it runs inside explorer.exe, and all the UI and encryption live in the executable.
 
 #include <windows.h>
 #include <shlobj.h>
@@ -23,30 +21,32 @@
 #pragma comment(lib, "ole32.lib")
 #pragma comment(lib, "user32.lib")
 
-// {142BC879-C3C7-4D93-B1E6-51CF20CC661E}. Las compilaciones de prueba usan otro (build.ps1 -Clsid) para
-// poder cargarlas sin reiniciar el Explorador, que mantiene en memoria la versión ya cargada.
+// {142BC879-C3C7-4D93-B1E6-51CF20CC661E}. Test builds use another one so that they can be loaded without restarting
+// Explorer, which keeps the version it already loaded in memory.
 #ifndef LOCKED_CLSID
 #define LOCKED_CLSID { 0x142bc879, 0xc3c7, 0x4d93, { 0xb1, 0xe6, 0x51, 0xcf, 0x20, 0xcc, 0x66, 0x1e } }
 #endif
 static const CLSID CLSID_LockedFolder = LOCKED_CLSID;
-// {4FB75F15-2E04-47FB-8F21-40CE81A144A5}: la misma clase para las carpetas bloqueadas que tienen contenido. Solo
-// cambia el icono que tiene registrado (DefaultIcon): en las vistas grandes el Explorador usa el de la
-// clase y no el IconResource del desktop.ini, así que vacías y con contenido necesitan clases distintas.
+// {4FB75F15-2E04-47FB-8F21-40CE81A144A5}: the same class for locked folders that have content. Only the icon it has
+// registered (DefaultIcon) changes: in large icon views Explorer uses the one of the class and not the IconResource
+// of desktop.ini, so empty folders and folders with content need different classes.
 #ifndef LOCKED_FILLED_CLSID
 #define LOCKED_FILLED_CLSID { 0x4fb75f15, 0x2e04, 0x47fb, { 0x8f, 0x21, 0x40, 0xce, 0x81, 0xa1, 0x44, 0xa5 } }
 #endif
 static const CLSID CLSID_LockedFolderFilled = LOCKED_FILLED_CLSID;
-// CLSID_ShellFSFolder: la carpeta normal del sistema de archivos.
+// CLSID_ShellFSFolder: the normal file system folder.
 static const CLSID CLSID_FileSystemFolder = { 0xf3364ba0, 0x65b9, 0x11ce, { 0xa9, 0xba, 0x00, 0xaa, 0x00, 0x4a, 0xe8, 0x37 } };
 
-static const wchar_t VaultFileName[] = L"Desbloquear carpeta.doorman";
+// The encrypted file of a locked folder (see FolderLocker.cs). Folders locked before version 3.0 use the legacy name.
+static const wchar_t VaultFileName[] = L"Unlock folder.doorman";
+static const wchar_t LegacyVaultFileName[] = L"Desbloquear carpeta.doorman";
 static const wchar_t ExeFileName[] = L"DoorMan.exe";
 
 static HMODULE g_module;
 static LONG g_objects;
 static LONG g_locks;
 
-// Diagnóstico opcional: solo escribe si existe %LOCALAPPDATA%\DoorMan\shell.log.
+// Optional diagnostics: it only writes if %LOCALAPPDATA%\DoorMan\shell.log exists.
 static void Trace(const wchar_t* format, ...)
 {
     wchar_t path[MAX_PATH];
@@ -80,12 +80,12 @@ static void TraceIid(const wchar_t* what, REFIID riid)
     Trace(L"%u %s %s", GetCurrentProcessId(), what, iid);
 }
 
-// El Explorador puede pedir la vista dos veces seguidas para la misma navegación.
+// Explorer may ask for the view twice in a row for the same navigation.
 static SRWLOCK g_lastLock = SRWLOCK_INIT;
 static std::wstring g_lastPath;
 static ULONGLONG g_lastTick;
 
-// Lanza DoorMan.exe (junto a esta DLL) con los argumentos indicados.
+// Starts DoorMan.exe (next to this DLL) with the given arguments.
 static void LaunchDoorMan(const std::wstring& arguments)
 {
     wchar_t exe[MAX_PATH];
@@ -93,7 +93,7 @@ static void LaunchDoorMan(const std::wstring& arguments)
         return;
     std::wstring command = L"\"" + std::wstring(exe) + L"\" " + arguments;
 
-    // El diálogo de contraseña debe poder ponerse delante del Explorador.
+    // The password dialog must be able to come in front of Explorer.
     AllowSetForegroundWindow(ASFW_ANY);
     STARTUPINFOW si = { sizeof(si) };
     PROCESS_INFORMATION pi = {};
@@ -104,16 +104,20 @@ static void LaunchDoorMan(const std::wstring& arguments)
     }
 }
 
+static bool FileExistsIn(std::wstring folder, const wchar_t* name)
+{
+    if (folder.back() != L'\\')
+        folder += L'\\';
+    folder += name;
+    DWORD attributes = GetFileAttributesW(folder.c_str());
+    return attributes != INVALID_FILE_ATTRIBUTES && !(attributes & FILE_ATTRIBUTE_DIRECTORY);
+}
+
 static bool IsLockedPath(const std::wstring& folder)
 {
     if (folder.empty())
         return true;
-    std::wstring vault = folder;
-    if (vault.back() != L'\\')
-        vault += L'\\';
-    vault += VaultFileName;
-    DWORD attributes = GetFileAttributesW(vault.c_str());
-    return attributes != INVALID_FILE_ATTRIBUTES && !(attributes & FILE_ATTRIBUTE_DIRECTORY);
+    return FileExistsIn(folder, VaultFileName) || FileExistsIn(folder, LegacyVaultFileName);
 }
 
 static void LaunchUnlock(const std::wstring& folder, HWND owner)
@@ -131,7 +135,7 @@ static void LaunchUnlock(const std::wstring& folder, HWND owner)
         return;
 
     HWND window = owner ? GetAncestor(owner, GA_ROOT) : nullptr;
-    LaunchDoorMan(L"--abrir \"" + folder + L"\" --ventana " + std::to_wstring(reinterpret_cast<ULONG_PTR>(window)));
+    LaunchDoorMan(L"--open \"" + folder + L"\" --window " + std::to_wstring(reinterpret_cast<ULONG_PTR>(window)));
 }
 
 class LockedFolder final : public IShellFolder2, public IPersistFolder3
@@ -152,7 +156,7 @@ class LockedFolder final : public IShellFolder2, public IPersistFolder3
 
     bool IsLocked() const { return IsLockedPath(_path); }
 
-    // La carpeta del sistema de archivos que hay debajo, para cuando ya está desbloqueada.
+    // The file system folder underneath, for when it is already unlocked.
     IShellFolder2* Inner()
     {
         if (_inner || !_pidl)
@@ -268,7 +272,7 @@ public:
         if (!items)
             return E_POINTER;
         *items = nullptr;
-        return S_FALSE; // Bloqueada: no hay nada que mostrar (miniaturas, panel de navegación…).
+        return S_FALSE; // Locked: nothing to show (thumbnails, navigation pane…).
     }
     IFACEMETHODIMP BindToObject(PCUIDLIST_RELATIVE pidl, IBindCtx* pbc, REFIID riid, void** ppv) override
     {
@@ -298,7 +302,7 @@ public:
         *ppv = nullptr;
         if (riid == IID_IShellView)
         {
-            // El Explorador quiere mostrar la carpeta: no se entra; se pide la contraseña.
+            // Explorer wants to show the folder: it does not go in; the password is asked for instead.
             LaunchUnlock(_path, owner);
             return HRESULT_FROM_WIN32(ERROR_CANCELLED);
         }
@@ -376,13 +380,13 @@ public:
 #undef FORWARD_IF_UNLOCKED
 };
 
-// Las carpetas desbloqueadas que gestiona DoorMan, una ruta por línea en UTF-8. Las escribe la aplicación
-// (ShellIntegration.Refresh) cada vez que cambia el estado de una carpeta.
+// The unlocked folders that DoorMan manages, one path per line in UTF-8. The app writes the list
+// (ShellIntegration.Refresh) every time the state of a folder changes.
 static bool IsUnlockedManagedPath(const std::wstring& folder)
 {
     wchar_t list[MAX_PATH];
     DWORD n = GetEnvironmentVariableW(L"LOCALAPPDATA", list, MAX_PATH);
-    if (!n || n >= MAX_PATH || !PathAppendW(list, L"DoorMan\\desbloqueadas.txt"))
+    if (!n || n >= MAX_PATH || !PathAppendW(list, L"DoorMan\\unlocked.txt"))
         return false;
     HANDLE file = CreateFileW(list, GENERIC_READ, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, nullptr, OPEN_EXISTING, 0, nullptr);
     if (file == INVALID_HANDLE_VALUE)
@@ -422,11 +426,35 @@ static bool IsUnlockedManagedPath(const std::wstring& folder)
     return false;
 }
 
-// {C253C289-0E3C-454E-A668-AFFA07C052CA}: la opción de DoorMan en el menú contextual moderno de Windows 11.
-// Ese menú solo admite comandos declarados en un paquete (paquete\AppxManifest.xml), no los del registro.
+// {C253C289-0E3C-454E-A668-AFFA07C052CA}: DoorMan's option in the modern Windows 11 context menu.
+// That menu only accepts commands declared in a package (package\AppxManifest.xml), not registry ones.
 static const CLSID CLSID_MenuCommand = { 0xc253c289, 0x0e3c, 0x454e, { 0xa6, 0x68, 0xaf, 0xfa, 0x07, 0xc0, 0x52, 0xca } };
 
 enum class FolderAction { Protect, Lock, Unlock };
+
+// Menu texts in the languages of DoorMan (see Strings.cs), chosen by the user's Windows display language.
+static const wchar_t* ActionTitle(FolderAction action)
+{
+    // English, Spanish, French, Chinese (Simplified), Hindi.
+    static const wchar_t* const Protect[] = { L"Protect with password", L"Proteger con contraseña", L"Protéger par mot de passe", L"使用密码保护", L"पासवर्ड से सुरक्षित करें" };
+    static const wchar_t* const Lock[] = { L"Lock", L"Bloquear", L"Verrouiller", L"锁定", L"लॉक करें" };
+    static const wchar_t* const Unlock[] = { L"Unlock", L"Desbloquear", L"Déverrouiller", L"解锁", L"अनलॉक करें" };
+    int language;
+    switch (PRIMARYLANGID(GetUserDefaultUILanguage()))
+    {
+    case LANG_SPANISH: language = 1; break;
+    case LANG_FRENCH: language = 2; break;
+    case LANG_CHINESE: language = 3; break;
+    case LANG_HINDI: language = 4; break;
+    default: language = 0; break;
+    }
+    switch (action)
+    {
+    case FolderAction::Unlock: return Unlock[language];
+    case FolderAction::Lock: return Lock[language];
+    default: return Protect[language];
+    }
+}
 
 class MenuCommand final : public IExplorerCommand
 {
@@ -434,7 +462,7 @@ class MenuCommand final : public IExplorerCommand
 
     ~MenuCommand() { InterlockedDecrement(&g_objects); }
 
-    // La única carpeta del sistema de archivos seleccionada; con varios elementos no se muestra nada.
+    // The only file system folder selected; with several items nothing is shown.
     static bool SelectedFolder(IShellItemArray* items, std::wstring& path)
     {
         DWORD count = 0;
@@ -467,6 +495,37 @@ class MenuCommand final : public IExplorerCommand
         else
             action = FolderAction::Protect;
         return true;
+    }
+
+    // The installer copies the icons to "icons\<hash>" (the path changes with every version so that Explorer does
+    // not use its cache): the most recent subfolder that contains the icon is chosen.
+    static std::wstring FindIconFile(const wchar_t* name)
+    {
+        wchar_t root[MAX_PATH];
+        if (!GetModuleFileNameW(g_module, root, MAX_PATH) || !PathRemoveFileSpecW(root) || !PathAppendW(root, L"icons"))
+            return {};
+        std::wstring pattern = std::wstring(root) + L"\\*";
+        WIN32_FIND_DATAW entry;
+        HANDLE find = FindFirstFileW(pattern.c_str(), &entry);
+        if (find == INVALID_HANDLE_VALUE)
+            return {};
+        std::wstring best;
+        FILETIME bestTime = {};
+        do
+        {
+            if (!(entry.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) || entry.cFileName[0] == L'.')
+                continue;
+            std::wstring candidate = std::wstring(root) + L"\\" + entry.cFileName + L"\\" + name;
+            if (GetFileAttributesW(candidate.c_str()) == INVALID_FILE_ATTRIBUTES)
+                continue;
+            if (best.empty() || CompareFileTime(&entry.ftLastWriteTime, &bestTime) > 0)
+            {
+                best = candidate;
+                bestTime = entry.ftLastWriteTime;
+            }
+        } while (FindNextFileW(find, &entry));
+        FindClose(find);
+        return best;
     }
 
 public:
@@ -503,15 +562,10 @@ public:
         std::wstring path;
         if (!ActionFor(items, action, path))
             return SHStrDupW(L"DoorMan", name);
-        switch (action)
-        {
-        case FolderAction::Unlock: return SHStrDupW(L"Desbloquear", name);
-        case FolderAction::Lock: return SHStrDupW(L"Bloquear", name);
-        default: return SHStrDupW(L"Proteger con contraseña", name);
-        }
+        return SHStrDupW(ActionTitle(action), name);
     }
-    // Icono de la acción (ver AppIcons): escudo para proteger, candado cerrado para bloquear y abierto para
-    // desbloquear. Si no se encuentra, el de DoorMan.exe (también un candado cerrado).
+    // Icon of the action (see AppIcons.cs): a shield to protect, a closed padlock to lock and an open one to unlock.
+    // If it is not found, the one of DoorMan.exe (also a closed padlock).
     IFACEMETHODIMP GetIcon(IShellItemArray* items, LPWSTR* icon) override
     {
         if (!icon)
@@ -530,37 +584,6 @@ public:
         if (!GetModuleFileNameW(g_module, exe, MAX_PATH) || !PathRemoveFileSpecW(exe) || !PathAppendW(exe, ExeFileName))
             return E_FAIL;
         return SHStrDupW((std::wstring(exe) + L",0").c_str(), icon);
-    }
-
-    // El instalador copia los iconos a «iconos\<huella>» (la ruta cambia con cada versión para que el
-    // Explorador no use su caché): se elige la subcarpeta más reciente que contenga el icono.
-    static std::wstring FindIconFile(const wchar_t* name)
-    {
-        wchar_t root[MAX_PATH];
-        if (!GetModuleFileNameW(g_module, root, MAX_PATH) || !PathRemoveFileSpecW(root) || !PathAppendW(root, L"iconos"))
-            return {};
-        std::wstring pattern = std::wstring(root) + L"\\*";
-        WIN32_FIND_DATAW entry;
-        HANDLE find = FindFirstFileW(pattern.c_str(), &entry);
-        if (find == INVALID_HANDLE_VALUE)
-            return {};
-        std::wstring best;
-        FILETIME bestTime = {};
-        do
-        {
-            if (!(entry.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) || entry.cFileName[0] == L'.')
-                continue;
-            std::wstring candidate = std::wstring(root) + L"\\" + entry.cFileName + L"\\" + name;
-            if (GetFileAttributesW(candidate.c_str()) == INVALID_FILE_ATTRIBUTES)
-                continue;
-            if (best.empty() || CompareFileTime(&entry.ftLastWriteTime, &bestTime) > 0)
-            {
-                best = candidate;
-                bestTime = entry.ftLastWriteTime;
-            }
-        } while (FindNextFileW(find, &entry));
-        FindClose(find);
-        return best;
     }
     IFACEMETHODIMP GetToolTip(IShellItemArray*, LPWSTR* tip) override
     {
@@ -590,9 +613,9 @@ public:
         std::wstring path;
         if (!ActionFor(items, action, path))
             return S_OK;
-        const wchar_t* argument = action == FolderAction::Unlock ? L"--abrir"
-            : action == FolderAction::Lock ? L"--rebloquear"
-            : L"--proteger";
+        const wchar_t* argument = action == FolderAction::Unlock ? L"--open"
+            : action == FolderAction::Lock ? L"--lock"
+            : L"--protect";
         LaunchDoorMan(std::wstring(argument) + L" \"" + path + L"\"");
         return S_OK;
     }
@@ -630,7 +653,7 @@ public:
         *ppv = nullptr;
         return E_NOINTERFACE;
     }
-    // Objeto estático: la vida de la DLL la controlan g_objects y g_locks.
+    // Static object: the lifetime of the DLL is controlled by g_objects and g_locks.
     IFACEMETHODIMP_(ULONG) AddRef() override { return 2; }
     IFACEMETHODIMP_(ULONG) Release() override { return 1; }
 

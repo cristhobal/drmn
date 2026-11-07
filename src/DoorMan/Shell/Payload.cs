@@ -3,10 +3,10 @@ using System.Reflection;
 namespace DoorMan.Shell;
 
 /// <summary>
-/// Los archivos que la instalación pone junto al ejecutable (la extensión del Explorador, los iconos y el
-/// paquete del menú de Windows 11) viajan dentro de DoorMan.exe como recursos «Payload/…» (ver DoorMan.csproj),
-/// para que baste con descargar un único archivo. Al instalar se extraen a una carpeta temporal con la misma
-/// estructura que tendrían sueltos, y el instalador los copia desde ahí.
+/// The files that the installation puts next to the executable (the Explorer extension, the icons and the Windows
+/// 11 context menu package) travel inside DoorMan.exe as “Payload/…” resources (see DoorMan.csproj), so that a
+/// single downloaded file is enough. When installing they are extracted to a temporary folder with the same layout
+/// they would have as loose files, and the installer copies them from there.
 /// </summary>
 internal sealed class Payload : IDisposable
 {
@@ -16,7 +16,7 @@ internal sealed class Payload : IDisposable
 
     Payload(string directory) => Directory = directory;
 
-    /// <summary>Extrae los archivos incluidos; null si el ejecutable no lleva ninguno (compilación de depuración).</summary>
+    /// <summary>Extracts the embedded files; null if the executable has none (debug build).</summary>
     public static Payload? Extract()
     {
         var assembly = Assembly.GetExecutingAssembly();
@@ -56,7 +56,7 @@ internal sealed class Payload : IDisposable
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
         {
-            // Es una carpeta temporal: si algo la tiene abierta, Windows la limpiará.
+            // It is a temporary folder: if something keeps it open, Windows will clean it up.
         }
     }
 }

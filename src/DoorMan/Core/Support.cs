@@ -1,11 +1,11 @@
 namespace DoorMan.Core;
 
-/// <summary>Error cuyo mensaje está pensado para mostrarse tal cual al usuario.</summary>
+/// <summary>Error whose message is meant to be shown to the user as is.</summary>
 internal sealed class UserFacingException(string message) : Exception(message);
 
 internal readonly record struct ProgressInfo(long Done, long Total, string? CurrentItem);
 
-/// <summary>Acumula el avance y lo notifica como mucho cada 50 ms.</summary>
+/// <summary>Accumulates progress and reports it at most every 50 ms.</summary>
 internal sealed class ProgressTracker(IProgress<ProgressInfo>? sink, long total)
 {
     long _done;
@@ -41,7 +41,7 @@ internal static class PathUtil
     public static bool AreSame(string a, string b) =>
         string.Equals(Normalize(a), Normalize(b), StringComparison.OrdinalIgnoreCase);
 
-    /// <summary>¿Es <paramref name="path"/> igual a <paramref name="ancestor"/> o está dentro de ella?</summary>
+    /// <summary>Is <paramref name="path"/> the same as <paramref name="ancestor"/> or inside it?</summary>
     public static bool IsSameOrInside(string path, string ancestor)
     {
         path = Normalize(path);

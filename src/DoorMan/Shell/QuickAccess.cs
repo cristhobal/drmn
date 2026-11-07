@@ -3,10 +3,10 @@ using DoorMan.Core;
 namespace DoorMan.Shell;
 
 /// <summary>
-/// Acceso rápido guarda su propia referencia a cada carpeta, tomada cuando se añadió. Si se añadió
-/// estando desbloqueada, la referencia no pasa por la extensión de DoorMan y el Explorador entraría
-/// en la carpeta bloqueada sin pedir la contraseña. Al bloquear, la carpeta se vuelve a anclar (para
-/// que Windows renueve la referencia) o, si solo aparecía como frecuente, se quita de la lista.
+/// Quick Access keeps its own reference to each folder, taken when it was added. If it was added while unlocked,
+/// the reference does not go through DoorMan's extension and Explorer would enter the locked folder without asking
+/// for the password. When locking, the folder is pinned again (so that Windows renews the reference) or, if it only
+/// showed up as a frequent folder, removed from the list.
 /// </summary>
 internal static class QuickAccess
 {
@@ -14,8 +14,8 @@ internal static class QuickAccess
 
     public static void Refresh(string folder)
     {
-        // Las órdenes del shell son asíncronas y necesitan un hilo STA vivo mientras terminan.
-        var thread = new Thread(() => RefreshNow(folder)) { IsBackground = true, Name = "DoorMan Acceso rápido" };
+        // Shell verbs are asynchronous and need a live STA thread while they finish.
+        var thread = new Thread(() => RefreshNow(folder)) { IsBackground = true, Name = "DoorMan Quick Access" };
         thread.SetApartmentState(ApartmentState.STA);
         thread.Start();
     }
@@ -53,7 +53,7 @@ internal static class QuickAccess
         }
         catch (Exception)
         {
-            // Acceso rápido es una comodidad: si falla, la carpeta sigue cifrada igualmente.
+            // Quick Access is a convenience: if this fails, the folder is encrypted anyway.
         }
     }
 }

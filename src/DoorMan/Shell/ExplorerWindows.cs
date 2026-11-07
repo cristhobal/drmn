@@ -8,9 +8,9 @@ internal static class ExplorerWindows
     static readonly Guid ShellWindowsClsid = new("9BA05972-F6A8-11CF-A442-00A0C90A8F39");
 
     /// <summary>
-    /// Muestra la carpeta. Navega en la ventana del Explorador desde la que se intentó abrir
-    /// (<paramref name="preferred"/>) o, si no, en una que esté en la carpeta padre o en la propia
-    /// carpeta; si no hay ninguna, abre una nueva.
+    /// Shows the folder. It navigates in the Explorer window where the user tried to open it
+    /// (<paramref name="preferred"/>) or else in one showing the parent folder or the folder itself; if there is
+    /// none, it opens a new one.
     /// </summary>
     public static void Show(string folder, IntPtr preferred = default)
     {
@@ -34,7 +34,7 @@ internal static class ExplorerWindows
                 }
                 catch (Exception)
                 {
-                    continue; // No es una ventana de carpetas (p. ej. el Panel de control).
+                    continue; // Not a folder window (for example, Control Panel).
                 }
                 bool here = PathUtil.AreSame(current, folder) || (parent is not null && PathUtil.AreSame(current, parent));
                 if (here && (match is null || hwnd == (long)preferred))
@@ -49,15 +49,15 @@ internal static class ExplorerWindows
         }
         catch (Exception)
         {
-            // Si la automatización del shell falla, basta con abrir una ventana nueva.
+            // If shell automation fails, opening a new window is enough.
         }
         Process.Start(new ProcessStartInfo("explorer.exe", $"\"{folder}\"") { UseShellExecute = false })?.Dispose();
     }
 
     /// <summary>
-    /// Navega a la carpeta recién desbloqueada y espera a que la ventana llegue. El Explorador puede
-    /// tener aún en caché la carpeta como bloqueada y rechazar el primer intento; en ese caso se
-    /// recarga la vista (como F5) y se vuelve a intentar.
+    /// Navigates to the folder just unlocked and waits for the window to get there. Explorer may still have the
+    /// folder cached as locked and reject the first attempt; in that case the view is reloaded (like F5) and the
+    /// navigation is tried again.
     /// </summary>
     static bool NavigateAndWait(dynamic window, string folder)
     {
@@ -79,14 +79,14 @@ internal static class ExplorerWindows
                 }
                 catch (Exception)
                 {
-                    // La ventana está a mitad de navegación.
+                    // The window is in the middle of navigating.
                 }
             }
         }
         return false;
     }
 
-    /// <summary>Saca a la carpeta padre las ventanas del Explorador que estén dentro de la carpeta (antes de bloquearla).</summary>
+    /// <summary>Moves Explorer windows that are inside the folder to its parent (before locking it).</summary>
     public static void LeaveFolder(string folder)
     {
         var parent = Path.GetDirectoryName(folder);
@@ -99,9 +99,8 @@ internal static class ExplorerWindows
     }
 
     /// <summary>
-    /// Recarga (como F5) las ventanas que muestran la carpeta padre después de bloquear. Sin esto, el
-    /// Explorador puede seguir usando la carpeta tal como era antes de bloquearla y entrar sin pedir
-    /// la contraseña durante unos segundos.
+    /// Reloads (like F5) the windows showing the parent folder after locking. Without this, Explorer may keep using
+    /// the folder as it was before it was locked and enter it without asking for the password for a few seconds.
     /// </summary>
     public static void RefreshParentViews(string folder)
     {
@@ -131,13 +130,13 @@ internal static class ExplorerWindows
                 }
                 catch (Exception)
                 {
-                    // Ventanas que no muestran una carpeta del disco.
+                    // Windows that do not show a folder on disk.
                 }
             }
         }
         catch (Exception)
         {
-            // Sin automatización del shell no se puede ajustar ninguna ventana; no es imprescindible.
+            // Without shell automation no window can be adjusted; it is not essential.
         }
     }
 }

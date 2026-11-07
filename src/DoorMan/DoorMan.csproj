@@ -10,40 +10,45 @@
     <RootNamespace>DoorMan</RootNamespace>
     <ApplicationHighDpiMode>PerMonitorV2</ApplicationHighDpiMode>
     <ApplicationVisualStyles>true</ApplicationVisualStyles>
-    <SatelliteResourceLanguages>es</SatelliteResourceLanguages>
+    <!-- DoorMan's own texts are in Strings.cs; no satellite assemblies of the framework are needed. -->
+    <SatelliteResourceLanguages>en</SatelliteResourceLanguages>
     <Product>DoorMan</Product>
-    <Description>Protege carpetas con contraseña desde el Explorador de archivos</Description>
-    <Version>2.1.0</Version>
-    <NeutralLanguage>es-ES</NeutralLanguage>
-    <!-- La extensión del Explorador tiene que ser de la arquitectura de Windows: la de este ejecutable. -->
+    <Description>Password-protect folders from File Explorer</Description>
+    <Version>3.0.0</Version>
+    <NeutralLanguage>en</NeutralLanguage>
+    <!-- The Explorer extension must match the architecture of Windows, which is the one of this executable. -->
     <ShellArch Condition="'$(RuntimeIdentifier)' == 'win-x86'">x86</ShellArch>
+    <ShellArch Condition="'$(RuntimeIdentifier)' == 'win-arm64'">arm64</ShellArch>
     <ShellArch Condition="'$(ShellArch)' == ''">x64</ShellArch>
     <ShellExtension>..\..\native\DoorManShell\bin\$(ShellArch)\DoorManShell.dll</ShellExtension>
-    <!-- Paquete del menú de Windows 11 (DoorMan.msix y DoorMan.cer), generado antes de publicar. -->
-    <ContextMenuPackageDir>..\..\native\DoorManShell\bin\msix\</ContextMenuPackageDir>
-    <ApplicationIcon>..\..\icons\generados\lock_closed.ico</ApplicationIcon>
+    <!--
+      Windows 11 context menu package (DoorMan.msix and DoorMan.cer), built before publishing. Windows 11 only exists
+      for x64 and arm64, so the x86 build has none.
+    -->
+    <ContextMenuPackageDir>..\..\native\DoorManShell\bin\msix\$(ShellArch)\</ContextMenuPackageDir>
+    <ApplicationIcon>..\..\icons\generated\lock_closed.ico</ApplicationIcon>
     <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
     <!--
-      Los archivos marcadores (API Cloud Files) necesitan Windows 10 1709 o posterior. No se sube la
-      versión de destino porque añadiría la proyección de WinRT (unos 25 MB) sin usarla.
+      Placeholder files (Cloud Files API) need Windows 10 1709 or later. The target version is not raised because it
+      would add the WinRT projection (about 25 MB) without using it.
     -->
     <NoWarn>$(NoWarn);CA1416</NoWarn>
   </PropertyGroup>
 
-  <!-- Declaraciones de la API Cloud Files de Windows (NativeMethods.txt), generadas al compilar. -->
+  <!-- Declarations of the Windows Cloud Files API (NativeMethods.txt), generated at build time. -->
   <ItemGroup>
     <PackageReference Include="Microsoft.Windows.CsWin32" Version="0.3.367" PrivateAssets="all" />
   </ItemGroup>
 
   <!--
-    Lo que la instalación pone junto al ejecutable va DENTRO de él (recursos «Payload/…», ver Payload.cs): así
-    basta con descargar un único DoorMan.exe y hacer doble clic. Son la extensión del Explorador, los iconos
-    (icons\generados: carpetas bloqueadas y los de la aplicación y las opciones del menú) y el paquete del
-    menú de Windows 11. En la carpeta de compilación también se copian sueltos, para depurar.
+    What the installation puts next to the executable goes INSIDE it (“Payload/…” resources, see Payload.cs), so a
+    single DoorMan.exe is enough to download and double-click: the Explorer extension, the icons (icons\generated:
+    locked folders, the app and the menu options) and the Windows 11 context menu package. They are also copied as
+    loose files to the build folder, for debugging.
   -->
   <ItemGroup>
-    <EmbeddedResource Include="..\..\icons\generados\*.ico" LogicalName="Payload/iconos/%(Filename)%(Extension)" />
-    <None Include="..\..\icons\generados\*.ico" Link="iconos\%(Filename)%(Extension)"
+    <EmbeddedResource Include="..\..\icons\generated\*.ico" LogicalName="Payload/icons/%(Filename)%(Extension)" />
+    <None Include="..\..\icons\generated\*.ico" Link="icons\%(Filename)%(Extension)"
           CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="Never" />
   </ItemGroup>
   <ItemGroup Condition="Exists('$(ShellExtension)')">

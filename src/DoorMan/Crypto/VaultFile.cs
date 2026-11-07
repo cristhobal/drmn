@@ -3,9 +3,9 @@ using System.Security.Cryptography;
 namespace DoorMan.Crypto;
 
 /// <summary>
-/// Cabecera de la bóveda: <c>firma (8) | sobre de la clave | id aleatorio (16)</c>.
-/// El contenido se cifra con una clave derivada (HKDF) de la clave de datos y del id,
-/// de modo que cada nuevo bloqueo con la misma contraseña usa una clave de contenido distinta.
+/// Vault header: <c>signature (8) | key envelope | random id (16)</c>.
+/// The content is encrypted with a key derived (HKDF) from the data key and the id, so every new lock with the same
+/// password uses a different content key.
 /// </summary>
 internal static class VaultFile
 {
@@ -48,10 +48,10 @@ internal static class VaultFile
     {
         var contentKey = new byte[KeyMaterial.KeySize];
         HKDF.DeriveKey(HashAlgorithmName.SHA256, key.DataKey, contentKey,
+            // Part of the file format: changing it would make every existing vault unreadable.
             header.AsSpan(HeaderSize - FileIdSize), "DoorMan v1 contenido"u8);
         return contentKey;
     }
 
-    static InvalidDataException NotAVault() =>
-        new("El archivo de la carpeta protegida no es válido o está dañado.");
+    static InvalidDataException NotAVault() => new(Strings.VaultInvalid);
 }

@@ -9,7 +9,7 @@ internal sealed record ArchiveEntry(
     EntryKind Kind, string RelativePath, FileAttributes Attributes,
     DateTime CreationUtc, DateTime LastWriteUtc, long Length = 0);
 
-/// <summary>Lista de lo que hay en una carpeta, recogida antes de cifrarla.</summary>
+/// <summary>List of what a folder contains, taken before encrypting it.</summary>
 internal sealed class FolderScan
 {
     public required string Root { get; init; }
@@ -45,9 +45,7 @@ internal sealed class FolderScan
                 continue;
             var childRel = rel.Length == 0 ? item.Name : rel + '\\' + item.Name;
             if (item.Attributes.HasFlag(FileAttributes.ReparsePoint))
-                throw new UserFacingException(
-                    $"La carpeta contiene «{childRel}», que es un enlace simbólico, un punto de unión " +
-                    "o un archivo en la nube sin descargar. Este tipo de elementos no se puede proteger.");
+                throw new UserFacingException(Strings.UnsupportedItem(childRel));
 
             if (item is DirectoryInfo sub)
             {
@@ -64,8 +62,8 @@ internal sealed class FolderScan
 }
 
 /// <summary>
-/// Empaqueta una carpeta en un flujo secuencial (que después se cifra) y lo restaura.
-/// Cada registro: tipo, ruta relativa, atributos, fechas y, en los archivos, longitud + datos.
+/// Packs a folder into a sequential stream (which is then encrypted) and restores it.
+/// Each record: kind, relative path, attributes, dates and, for files, length + data.
 /// </summary>
 internal static class FolderArchive
 {
@@ -76,7 +74,7 @@ internal static class FolderArchive
         FileAttributes.ReadOnly | FileAttributes.Hidden | FileAttributes.System |
         FileAttributes.Archive | FileAttributes.NotContentIndexed;
 
-    /// <returns>El hash SHA-256 de cada archivo, en el orden de <see cref="FolderScan.Entries"/>.</returns>
+    /// <returns>The SHA-256 hash of each file, in the order of <see cref="FolderScan.Entries"/>.</returns>
     public static List<byte[]> Pack(FolderScan scan, Stream output, ProgressTracker? progress)
     {
         var hashes = new List<byte[]>();
@@ -91,7 +89,7 @@ internal static class FolderArchive
 
             progress?.SetItem(e.RelativePath);
             using var hash = IncrementalHash.CreateHash(HashAlgorithmName.SHA256);
-            // FileShare.Read: nadie puede modificar el archivo mientras se cifra.
+            // FileShare.Read: nobody can modify the file while it is being encrypted.
             using var fs = new FileStream(Path.Combine(scan.Root, e.RelativePath),
                 FileMode.Open, FileAccess.Read, FileShare.Read, 1, FileOptions.SequentialScan);
             if (fs.Length != e.Length)
@@ -114,7 +112,7 @@ internal static class FolderArchive
         return hashes;
     }
 
-    /// <summary>Comprueba que el flujo descifrado contiene exactamente lo que se empaquetó.</summary>
+    /// <summary>Checks that the decrypted stream holds exactly what was packed.</summary>
     public static void Verify(Stream input, FolderScan scan, List<byte[]> hashes, ProgressTracker? progress)
     {
         var buffer = new byte[BufferSize];
@@ -151,11 +149,11 @@ internal static class FolderArchive
     }
 
     /// <summary>
-    /// Restaura el contenido en <paramref name="root"/>. Si un nombre ya existe, el restaurado
-    /// se guarda como «nombre (2).ext». Las rutas creadas se añaden a <paramref name="created"/>
-    /// para poder deshacer la operación si falla a medias.
+    /// Restores the content into <paramref name="root"/>. If a name already exists, the restored item is saved as
+    /// “name (2).ext”. The paths created are added to <paramref name="created"/> so that the operation can be
+    /// undone if it fails halfway.
     /// </summary>
-    /// <returns>El registro de la carpeta raíz (sus atributos originales).</returns>
+    /// <returns>The record of the root folder (its original attributes).</returns>
     public static ArchiveEntry Extract(Stream input, string root, ProgressTracker? progress, List<string> created)
     {
         var buffer = new byte[BufferSize];
@@ -208,7 +206,7 @@ internal static class FolderArchive
         }
         CryptographicOperations.ZeroMemory(buffer);
 
-        // De dentro hacia fuera, para que crear el contenido no altere las fechas ya restauradas.
+        // From the inside out, so that creating the content does not alter the dates already restored.
         for (int i = dirs.Count - 1; i >= 0; i--)
         {
             var (path, e) = dirs[i];
@@ -284,12 +282,9 @@ internal static class FolderArchive
         }
     }
 
-    static IOException Changed(ArchiveEntry e) =>
-        new($"El archivo «{e.RelativePath}» cambió mientras se cifraba. Ciérralo e inténtalo de nuevo.");
+    static IOException Changed(ArchiveEntry e) => new(Strings.FileChanged(e.RelativePath));
 
-    static InvalidDataException Corrupt() =>
-        new("El archivo cifrado de la carpeta está dañado.");
+    static InvalidDataException Corrupt() => new(Strings.VaultDamaged);
 
-    static IOException VerifyFailed() =>
-        new("La comprobación del archivo cifrado ha fallado. No se ha modificado ningún archivo de la carpeta.");
+    static IOException VerifyFailed() => new(Strings.VerifyFailed);
 }

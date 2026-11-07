@@ -7,26 +7,25 @@ using Windows.Win32.Storage.CloudFilters;
 namespace DoorMan.Agent;
 
 /// <summary>
-/// Atiende las peticiones de Windows cuando un programa intenta leer un archivo de una carpeta
-/// bloqueada. La primera petición de una carpeta abre una <see cref="UnlockSession"/> (que pide la
-/// contraseña); las demás, incluidas las que Windows repite si la espera pasa de 60 segundos, se
-/// suman a la misma sesión.
+/// Serves the requests Windows makes when an app tries to read a file of a locked folder. The first request for a
+/// folder opens an <see cref="UnlockSession"/> (which asks for the password); the others, including the ones
+/// Windows repeats when the wait goes over 60 seconds, join the same session.
 /// </summary>
 internal sealed unsafe class CloudProvider
 {
-    // STATUS_CLOUD_FILE_ACCESS_DENIED: el programa recibe «Se denegó el acceso al archivo de nube».
+    // STATUS_CLOUD_FILE_ACCESS_DENIED: the app gets “Access to the cloud file is denied”.
     static readonly NTSTATUS AccessDenied = new(unchecked((int)0xC000CF18));
     const int TransferChunk = 1 << 20;
 
-    // Servicios que leen archivos por su cuenta (indexado, antivirus): nunca deben provocar la petición de contraseña.
+    // Services that read files on their own (indexing, antivirus): they must never trigger the password prompt.
     static readonly HashSet<string> IgnoredProcesses = new(StringComparer.OrdinalIgnoreCase)
     {
         "SearchProtocolHost.exe", "SearchFilterHost.exe", "SearchIndexer.exe",
         "MsMpEng.exe", "MpDefenderCoreService.exe", "NisSrv.exe",
     };
 
-    // Tras cancelar la contraseña, se rechazan sin preguntar las peticiones de esa carpeta durante un rato:
-    // muchos programas reintentan o leen varios archivos seguidos.
+    // After the password is cancelled, requests for that folder are refused without asking for a while:
+    // many apps retry or read several files in a row.
     static readonly TimeSpan CancelCooldown = TimeSpan.FromSeconds(5);
 
     readonly object _sync = new();
@@ -38,11 +37,11 @@ internal sealed unsafe class CloudProvider
     readonly CF_CALLBACK _fetchData;
     readonly CF_CALLBACK_REGISTRATION[] _callbacks;
 
-    /// <param name="unlockRequested">Pide la contraseña de la carpeta (en el hilo de la interfaz) y cierra la sesión.</param>
+    /// <param name="unlockRequested">Asks for the password of the folder (on the UI thread) and closes the session.</param>
     public CloudProvider(Action<string, UnlockSession> unlockRequested)
     {
         _unlockRequested = unlockRequested;
-        _fetchData = OnFetchData; // referencia viva mientras exista el proveedor
+        _fetchData = OnFetchData; // kept alive as long as the provider exists
         _callbacks =
         [
             new() { Type = CF_CALLBACK_TYPE.CF_CALLBACK_TYPE_FETCH_DATA, Callback = _fetchData },
@@ -78,10 +77,10 @@ internal sealed unsafe class CloudProvider
     }
 
     /// <summary>
-    /// Sesión de desbloqueo de la carpeta: la existente (si un programa ya está esperando un archivo)
-    /// o una nueva. Así un desbloqueo con doble clic también atiende a esos programas.
+    /// A new unlock session for the folder, so that unlocking with a double-click also serves the apps waiting for
+    /// one of its files.
     /// </summary>
-    /// <returns>La sesión, o <c>null</c> si ya hay otra en curso para la carpeta (que atenderá a todos).</returns>
+    /// <returns>The session, or <c>null</c> if another one is already in progress for the folder (it will serve everyone).</returns>
     public UnlockSession? BeginSession(string folder)
     {
         lock (_sync)
@@ -137,12 +136,12 @@ internal sealed unsafe class CloudProvider
         session.Add(request);
         if (isNew)
             _unlockRequested(session.Folder, session);
-        // Windows espera a que se entregue el contenido; el programa que abrió el archivo, también.
+        // Windows waits for the content to be handed over, and so does the app that opened the file.
         if (!request.Wait(TimeSpan.FromMinutes(15)))
             Fail(request);
     }
 
-    /// <summary>Entrega el archivo completo desde el contenido descifrado.</summary>
+    /// <summary>Hands over the whole file from the decrypted content.</summary>
     internal static void Transfer(FetchRequest request, string staging)
     {
         try
@@ -169,7 +168,7 @@ internal sealed unsafe class CloudProvider
                     parameters.TransferData.Offset = offset;
                     parameters.TransferData.Length = n;
                     if (PInvoke.CfExecute(operation, ref parameters).Failed)
-                        break; // El programa se cansó de esperar y Windows canceló la petición.
+                        break; // The app gave up waiting and Windows cancelled the request.
                 }
                 offset += n;
             }
@@ -206,7 +205,7 @@ internal sealed unsafe class CloudProvider
     };
 }
 
-/// <summary>Un programa esperando el contenido de un archivo.</summary>
+/// <summary>An app waiting for the content of a file.</summary>
 internal sealed class FetchRequest(CF_CONNECTION_KEY connection, long transferKey, long requestKey,
     string relativePath, long offset, long length)
 {
@@ -231,8 +230,8 @@ internal sealed class FetchRequest(CF_CONNECTION_KEY connection, long transferKe
 }
 
 /// <summary>
-/// Un desbloqueo en curso de una carpeta y los programas que esperan alguno de sus archivos.
-/// En cuanto el contenido está descifrado se les entrega; si no se desbloquea, se les deniega.
+/// An unlock in progress for a folder and the apps waiting for some of its files. As soon as the content is
+/// decrypted it is handed over to them; if the folder is not unlocked, they are denied.
 /// </summary>
 internal sealed class UnlockSession(CloudProvider provider, string folder)
 {
@@ -262,8 +261,8 @@ internal sealed class UnlockSession(CloudProvider provider, string folder)
     }
 
     /// <summary>
-    /// El contenido ya está descifrado: se entrega a quienes esperan y la carpeta se desconecta para
-    /// poder sustituir los marcadores.
+    /// The content is now decrypted: it is handed over to whoever is waiting and the folder is disconnected so
+    /// that the placeholders can be replaced.
     /// </summary>
     public void Extracted(string staging)
     {
@@ -291,7 +290,7 @@ internal sealed class UnlockSession(CloudProvider provider, string folder)
         foreach (var request in pending.Where(r => !r.IsCompleted))
             CloudProvider.Fail(request);
         provider.EndSession(this, unlocked);
-        // Si no se desbloqueó, la carpeta sigue conectada (o se vuelve a conectar si se desconectó).
+        // If it was not unlocked, the folder stays connected (or is connected again if it was disconnected).
         if (!unlocked && FolderLocker.IsLocked(Folder))
             provider.Connect(Folder);
     }

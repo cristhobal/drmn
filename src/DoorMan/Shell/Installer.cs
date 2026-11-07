@@ -1,50 +1,57 @@
 using System.Diagnostics;
+using System.Runtime.InteropServices;
 using DoorMan.Core;
 using Microsoft.Win32;
 
 namespace DoorMan.Shell;
 
 /// <summary>
-/// Instalación por usuario (sin administrador) en %LOCALAPPDATA%\Programs\DoorMan:
-/// copia el ejecutable, activa la integración con el Explorador, añade el agente al inicio de
-/// sesión (y lo arranca) y lo registra en «Aplicaciones instaladas» de Configuración.
+/// Per-user installation (no administrator rights) in %LOCALAPPDATA%\Programs\DoorMan: copies the executable,
+/// turns on the File Explorer integration, adds the agent to sign-in (and starts it) and registers DoorMan in the
+/// installed apps list of Windows Settings.
 /// </summary>
 internal static class Installer
 {
     const string RunKey = @"Software\Microsoft\Windows\CurrentVersion\Run";
     const string UninstallKey = @"Software\Microsoft\Windows\CurrentVersion\Uninstall\DoorMan";
     const string ValueName = "DoorMan";
+    public const string IconsDirName = "icons";
+    /// <summary>Icon folder of versions before 3.0.</summary>
+    const string LegacyIconsDirName = "iconos";
 
     public static string InstallDir => Path.Combine(
         Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "Programs", "DoorMan");
     static string InstalledExe => Path.Combine(InstallDir, "DoorMan.exe");
 
-    /// <summary>Si este proceso es la copia instalada (y no, por ejemplo, el archivo recién descargado).</summary>
+    /// <summary>Whether this process is the installed copy (and not, for example, the file just downloaded).</summary>
     public static bool IsRunningInstalled => PathUtil.AreSame(Environment.ProcessPath!, InstalledExe);
 
     public static bool IsInstalled => File.Exists(InstalledExe);
 
     /// <summary>
-    /// La extensión del Explorador tiene que ser de la arquitectura de Windows, y cada ejecutable lleva la suya:
-    /// la versión de 32 bits no puede instalarse en un Windows de 64 bits.
+    /// The Explorer extension must match the architecture of Windows, and each executable carries its own: a build
+    /// for another processor (the 32-bit one on 64-bit Windows, the x64 one on ARM) cannot be installed.
     /// </summary>
-    public static bool IsWrongArchitecture => Environment.Is64BitOperatingSystem && !Environment.Is64BitProcess;
+    public static bool IsWrongArchitecture => RuntimeInformation.OSArchitecture != RuntimeInformation.ProcessArchitecture;
+
+    /// <summary>The file to download for this computer.</summary>
+    public static string ExpectedDownload =>
+        $"DoorMan-{RuntimeInformation.OSArchitecture.ToString().ToLowerInvariant()}.exe";
 
     public const string DownloadUrl = "https://github.com/cristhobal/drmn/releases/latest";
 
-    /// <returns>El código de salida: 0 si todo ha ido bien.</returns>
+    /// <returns>The exit code: 0 if everything went well.</returns>
     public static int Install()
     {
         var current = Environment.ProcessPath!;
         if (!PathUtil.AreSame(current, InstalledExe))
         {
-            // Copiar y continuar desde la copia instalada, para que el registro apunte a ella.
+            // Copy and continue from the installed copy, so that the registry points to it.
             Directory.CreateDirectory(InstallDir);
-            // Una copia instalada en ejecución bloquearía el archivo: se cierra antes de sustituirla.
+            // A running installed copy would lock the file: it is closed before replacing it.
             StopOtherInstances();
             File.Copy(current, InstalledExe, overwrite: true);
-            // Los archivos que acompañan al ejecutable van dentro de él; en una compilación de depuración
-            // están sueltos a su lado.
+            // The files that go next to the executable are inside it; in a debug build they are loose beside it.
             using (var payload = Payload.Extract())
             {
                 var source = payload?.Directory ?? Path.GetDirectoryName(current)!;
@@ -52,16 +59,16 @@ internal static class Installer
                 CopyIcons(source);
                 CopyPackage(source);
             }
-            // La copia instalada puede pedir UAC (ContextMenuPackage): que su aviso salga delante.
+            // The installed copy may ask for UAC (ContextMenuPackage): let its prompt come to the front.
             ContextMenuPackage.AllowNextProcessForeground();
-            using var child = Process.Start(InstalledExe, "--instalar")!;
+            using var child = Process.Start(InstalledExe, "--install")!;
             child.WaitForExit();
             return child.ExitCode;
         }
 
         ShellIntegration.Register();
         using (var run = Registry.CurrentUser.CreateSubKey(RunKey))
-            run.SetValue(ValueName, $"\"{InstalledExe}\" --inicio");
+            run.SetValue(ValueName, $"\"{InstalledExe}\" --startup");
         using (var app = Registry.CurrentUser.CreateSubKey(UninstallKey))
         {
             app.SetValue("DisplayName", "DoorMan");
@@ -69,31 +76,31 @@ internal static class Installer
             app.SetValue("Publisher", "DoorMan");
             app.SetValue("DisplayIcon", InstalledExe);
             app.SetValue("InstallLocation", InstallDir);
-            app.SetValue("UninstallString", $"\"{InstalledExe}\" --desinstalar");
+            app.SetValue("UninstallString", $"\"{InstalledExe}\" --uninstall");
             app.SetValue("EstimatedSize", (int)(new FileInfo(InstalledExe).Length / 1024), RegistryValueKind.DWord);
             app.SetValue("NoModify", 1, RegistryValueKind.DWord);
             app.SetValue("NoRepair", 1, RegistryValueKind.DWord);
         }
         RefreshIconCache();
-        // Menú contextual moderno de Windows 11: si falla, las opciones siguen en «Mostrar más opciones».
-        // Con el paquete, las opciones del registro sobran (saldrían repetidas en «Mostrar más opciones»).
+        // Modern Windows 11 context menu: if it fails, the options stay under “Show more options”.
+        // With the package, the registry entries are not needed (they would be repeated under “Show more options”).
         ShellIntegration.UsesPackagedMenu = ContextMenuPackage.Install(InstallDir, InstalledExe, out var warning);
         AppState.Sync();
         if (warning is not null)
-            UI.Notifications.Error("Menú contextual de Windows 11", warning);
-        // El agente atiende a las carpetas bloqueadas desde ya, sin esperar al próximo inicio de sesión.
-        Process.Start(new ProcessStartInfo(InstalledExe, "--agente") { UseShellExecute = false })?.Dispose();
+            UI.Notifications.Error(Strings.ContextMenuTitle, warning);
+        // The agent serves locked folders from now on, without waiting for the next sign-in.
+        Process.Start(new ProcessStartInfo(InstalledExe, "--agent") { UseShellExecute = false })?.Dispose();
         return 0;
     }
 
     public static void Uninstall()
     {
-        // Los iconos de las carpetas desbloqueadas apuntan a la instalación: se quitan. Las bloqueadas
-        // se dejan intactas para no tocar sus datos cifrados.
+        // Icons of unlocked folders point to the installation: they are removed. Locked folders are left as they
+        // are so that their encrypted data is not touched.
         foreach (var folder in AppState.Sync().Where(f => !f.Locked))
             FolderLocker.RemoveUnlockedAppearance(folder.Path);
         ShellIntegration.Unregister();
-        // El certificado se queda en el equipo (quitarlo pediría UAC); sin su clave privada no firma nada más.
+        // The certificate stays on the machine (removing it would need UAC); without its private key it signs nothing else.
         ContextMenuPackage.Uninstall();
         ShellIntegration.UsesPackagedMenu = false;
         using (var run = Registry.CurrentUser.CreateSubKey(RunKey))
@@ -101,7 +108,7 @@ internal static class Installer
         Registry.CurrentUser.DeleteSubKeyTree(UninstallKey, throwOnMissingSubKey: false);
         StopOtherInstances();
 
-        // Un ejecutable no puede borrarse a sí mismo: se borra cuando este proceso termina.
+        // An executable cannot delete itself: it is deleted when this process ends.
         if (PathUtil.AreSame(Environment.ProcessPath!, InstalledExe))
             Process.Start(new ProcessStartInfo("cmd.exe",
                 $"/c timeout /t 3 /nobreak >nul & rmdir /s /q \"{InstallDir}\"")
@@ -112,8 +119,8 @@ internal static class Installer
     }
 
     /// <summary>
-    /// Los iconos se reinstalan con la misma ruta, así que el Explorador seguiría mostrando la copia
-    /// que guardó en su caché: se le pide que la renueve y que vuelva a pintar las carpetas.
+    /// Asks Explorer to renew its icon cache and repaint the folders: otherwise it could keep showing the icons it
+    /// had cached for the same paths.
     /// </summary>
     static void RefreshIconCache()
     {
@@ -132,14 +139,13 @@ internal static class Installer
     }
 
     /// <summary>
-    /// Copia los iconos a «iconos\&lt;huella&gt;», una subcarpeta que cambia cuando cambian los iconos.
-    /// El Explorador guarda en caché los iconos por ruta: si se sobrescribiera el mismo archivo,
-    /// seguiría mostrando la versión antigua. Con una ruta nueva, las carpetas protegidas se
-    /// actualizan a ella al sincronizar y el Explorador vuelve a leer los iconos.
+    /// Copies the icons to “icons\&lt;hash&gt;”, a subfolder that changes whenever the icons change. Explorer caches
+    /// icons by path: if the same file were overwritten, it would keep showing the old one. With a new path, locked
+    /// folders are moved to it when syncing and Explorer reads the icons again.
     /// </summary>
     static void CopyIcons(string sourceDir)
     {
-        var source = Path.Combine(sourceDir, "iconos");
+        var source = Path.Combine(sourceDir, IconsDirName);
         if (!Directory.Exists(source))
             return;
         var icons = Directory.GetFiles(source, "*.ico").Order(StringComparer.OrdinalIgnoreCase).ToList();
@@ -151,17 +157,20 @@ internal static class Installer
             hash.AppendData(System.Text.Encoding.UTF8.GetBytes(Path.GetFileName(icon)));
             hash.AppendData(File.ReadAllBytes(icon));
         }
-        var root = Path.Combine(InstallDir, "iconos");
+        var root = Path.Combine(InstallDir, IconsDirName);
         var target = Path.Combine(root, Convert.ToHexString(hash.GetHashAndReset())[..12].ToLowerInvariant());
         Directory.CreateDirectory(target);
         foreach (var icon in icons)
             File.Copy(icon, Path.Combine(target, Path.GetFileName(icon)), overwrite: true);
 
-        // Iconos de versiones anteriores.
+        // Icons of earlier versions.
         foreach (var old in Directory.GetFiles(root, "*.ico"))
             TryDelete(() => File.Delete(old));
         foreach (var old in Directory.GetDirectories(root).Where(d => !PathUtil.AreSame(d, target)))
             TryDelete(() => Directory.Delete(old, recursive: true));
+        var legacy = Path.Combine(InstallDir, LegacyIconsDirName);
+        if (Directory.Exists(legacy))
+            TryDelete(() => Directory.Delete(legacy, recursive: true));
         Directory.SetLastWriteTimeUtc(target, DateTime.UtcNow);
     }
 
@@ -183,13 +192,13 @@ internal static class Installer
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
         {
-            // En uso: se borrará en la próxima instalación.
+            // In use: it will be deleted on the next installation.
         }
     }
 
     /// <summary>
-    /// Copia la extensión del Explorador. Si el Explorador la tiene cargada no se puede sobrescribir,
-    /// pero sí renombrar: la antigua se aparta y se borra en una instalación posterior.
+    /// Copies the Explorer extension. If Explorer has it loaded it cannot be overwritten, but it can be renamed:
+    /// the old one is moved aside and deleted on a later installation.
     /// </summary>
     static void CopyExtension(string sourceDir)
     {
@@ -198,16 +207,7 @@ internal static class Installer
         if (!File.Exists(source))
             return;
         foreach (var old in Directory.GetFiles(InstallDir, ShellIntegration.ExtensionFileName + ".*.old"))
-        {
-            try
-            {
-                File.Delete(old);
-            }
-            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
-            {
-                // Sigue cargada en el Explorador; se borrará la próxima vez.
-            }
-        }
+            TryDelete(() => File.Delete(old));
         if (File.Exists(target))
             File.Move(target, $"{target}.{DateTime.UtcNow.Ticks}.old");
         File.Copy(source, target);

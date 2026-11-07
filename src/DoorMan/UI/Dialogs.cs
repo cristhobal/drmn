@@ -1,6 +1,6 @@
 namespace DoorMan.UI;
 
-/// <summary>Mensajes con TaskDialog (el cuadro de mensaje nativo de Windows) y botones siempre en español.</summary>
+/// <summary>Messages with TaskDialog (the native Windows message box), with buttons in the language of DoorMan.</summary>
 internal static class Dialogs
 {
     const string Caption = "DoorMan";
@@ -22,7 +22,7 @@ internal static class Dialogs
             Heading = heading,
             Text = text,
             Icon = TaskDialogIcon.Warning,
-            Buttons = { accept, new TaskDialogButton("Cancelar") },
+            Buttons = { accept, new TaskDialogButton(Strings.Cancel) },
             DefaultButton = accept,
             AllowCancel = true,
         };
@@ -37,7 +37,7 @@ internal static class Dialogs
             Heading = heading,
             Text = text,
             Icon = icon,
-            Buttons = { new TaskDialogButton("Aceptar") },
+            Buttons = { new TaskDialogButton(Strings.OK) },
             AllowCancel = true,
         };
         TaskDialog.ShowDialog(page, TaskDialogStartupLocation.CenterScreen);

@@ -1,9 +1,9 @@
 <?xml version="1.0" encoding="utf-8"?>
 <!--
-  Paquete «disperso» (sparse): no contiene la aplicación, solo le da identidad de paquete a la instalación
-  de %LOCALAPPDATA%\Programs\DoorMan (ExternalLocation). Es lo que exige Windows 11 para mostrar una opción
-  en su menú contextual moderno sin pasar por «Mostrar más opciones». La opción es MenuCommand, de
-  DoorManShell.dll. herramientas\generar-paquete.ps1 sustituye $VERSION$ y $PUBLISHER$, lo empaqueta y lo firma.
+  Sparse package: it does not contain the app, it only gives package identity to the installation in
+  %LOCALAPPDATA%\Programs\DoorMan (ExternalLocation). Windows 11 requires this to show an option in its modern
+  context menu without going through "Show more options". The option is MenuCommand, from DoorManShell.dll.
+  The build replaces $VERSION$, $PUBLISHER$ and $ARCH$ (x64 or arm64), packs it and signs it.
 -->
 <Package
   xmlns="http://schemas.microsoft.com/appx/manifest/foundation/windows10"
@@ -14,7 +14,7 @@
   xmlns:desktop4="http://schemas.microsoft.com/appx/manifest/desktop/windows10/4"
   xmlns:desktop5="http://schemas.microsoft.com/appx/manifest/desktop/windows10/5"
   IgnorableNamespaces="uap uap10 rescap com desktop4 desktop5">
-  <Identity Name="DoorMan.MenuContextual" Publisher="$PUBLISHER$" Version="$VERSION$" ProcessorArchitecture="x64" />
+  <Identity Name="DoorMan.ContextMenu" Publisher="$PUBLISHER$" Version="$VERSION$" ProcessorArchitecture="$ARCH$" />
   <Properties>
     <DisplayName>DoorMan</DisplayName>
     <PublisherDisplayName>DoorMan</PublisherDisplayName>
@@ -22,7 +22,7 @@
     <uap10:AllowExternalContent>true</uap10:AllowExternalContent>
   </Properties>
   <Resources>
-    <Resource Language="es-es" />
+    <Resource Language="en-us" />
   </Resources>
   <Dependencies>
     <TargetDeviceFamily Name="Windows.Desktop" MinVersion="10.0.22000.0" MaxVersionTested="10.0.26100.0" />
@@ -33,7 +33,7 @@
   </Capabilities>
   <Applications>
     <Application Id="DoorMan" Executable="DoorMan.exe" uap10:TrustLevel="mediumIL" uap10:RuntimeBehavior="win32App">
-      <uap:VisualElements AppListEntry="none" DisplayName="DoorMan" Description="Protege carpetas con contraseña"
+      <uap:VisualElements AppListEntry="none" DisplayName="DoorMan" Description="Password-protect folders"
         BackgroundColor="transparent" Square150x150Logo="Assets\logo150.png" Square44x44Logo="Assets\logo44.png" />
       <Extensions>
         <com:Extension Category="windows.comServer">

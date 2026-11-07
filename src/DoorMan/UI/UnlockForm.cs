@@ -3,7 +3,7 @@ using DoorMan.Crypto;
 
 namespace DoorMan.UI;
 
-/// <summary>Pide la contraseña de una carpeta bloqueada. Si es incorrecta, lo indica y permite reintentar.</summary>
+/// <summary>Asks for the password of a locked folder. If it is wrong, it says so and lets the user try again.</summary>
 internal sealed class UnlockForm : DialogBase
 {
     readonly Func<string, KeyMaterial> _openKey;
@@ -18,13 +18,13 @@ internal sealed class UnlockForm : DialogBase
     public UnlockForm(string folderName, Func<string, KeyMaterial> openKey) : base("DoorMan")
     {
         _openKey = openKey;
-        AddInstruction($"«{folderName}» está protegida con contraseña");
-        AddText("Escribe la contraseña para abrir la carpeta.");
-        _password = AddPasswordField("&Contraseña:");
+        AddInstruction(Strings.FolderIsProtected(folderName));
+        AddText(Strings.EnterPasswordToOpen);
+        _password = AddPasswordField(Strings.PasswordLabel);
         _error = AddErrorLabel();
 
-        _cancel = AddButton("Cancelar", DialogResult.Cancel);
-        _ok = AddButton("Aceptar");
+        _cancel = AddButton(Strings.Cancel, DialogResult.Cancel);
+        _ok = AddButton(Strings.OK);
         _ok.Enabled = false;
         AcceptButton = _ok;
         CancelButton = _cancel;
@@ -46,7 +46,7 @@ internal sealed class UnlockForm : DialogBase
         }
         catch (WrongPasswordException)
         {
-            _error.Text = "La contraseña no es correcta. Inténtalo de nuevo.";
+            _error.Text = Strings.WrongPasswordTryAgain;
             SystemSounds.Hand.Play();
         }
         catch (Exception ex)
@@ -72,6 +72,6 @@ internal sealed class UnlockForm : DialogBase
         _cancel.Enabled = !busy;
         _ok.Enabled = !busy && _password.TextLength > 0;
         if (busy)
-            _error.Text = "Comprobando la contraseña…";
+            _error.Text = Strings.CheckingPassword;
     }
 }

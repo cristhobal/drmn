@@ -5,50 +5,66 @@ using DoorMan.Shell;
 
 namespace DoorMan.Core;
 
-/// <param name="NotDeleted">Elementos que siguen sin cifrar porque no se pudieron borrar.</param>
-/// <param name="InUse">Archivos abiertos al bloquear: siguen legibles hasta que se cierren (ver <see cref="CloudFiles.TryDehydrate"/>).</param>
+/// <param name="NotDeleted">Items still unencrypted because they could not be deleted.</param>
+/// <param name="InUse">Files open while locking: they stay readable until they are closed (see <see cref="CloudFiles.TryDehydrate"/>).</param>
 internal sealed record LockResult(IReadOnlyList<string> NotDeleted, IReadOnlyList<string> InUse);
 
 /// <summary>
-/// Bloqueo y desbloqueo de carpetas. Todo el contenido se guarda en el archivo cifrado
-/// <see cref="VaultFileName"/> y un desktop.ini le pone el icono de candado. Los archivos se
-/// quedan como marcadores sin contenido (<see cref="CloudFiles"/>), de modo que cualquier programa
-/// que intente abrir uno hace que DoorMan pida la contraseña. Si el volumen no admite marcadores,
-/// los originales se borran y la carpeta solo contiene el archivo cifrado.
+/// Locking and unlocking folders. All the content is stored in the encrypted file <see cref="VaultFileName"/> and a
+/// desktop.ini gives the folder its padlock icon. Files are left as placeholders without content
+/// (<see cref="CloudFiles"/>), so any app that tries to open one makes DoorMan ask for the password. If the volume
+/// does not support placeholders, the originals are deleted and the folder only holds the encrypted file.
 /// </summary>
 internal static class FolderLocker
 {
     public const string VaultExtension = ".doorman";
-    public const string VaultFileName = "Desbloquear carpeta" + VaultExtension;
+    public const string VaultFileName = "Unlock folder" + VaultExtension;
+    /// <summary>Name of the encrypted file in folders locked by versions before 3.0. Never change it.</summary>
+    public const string LegacyVaultFileName = "Desbloquear carpeta" + VaultExtension;
     const string TempFileName = ".doorman.tmp";
-    const string StagingDirName = ".doorman-desbloqueo";
+    const string StagingDirName = ".doorman-unlocking";
+    const string LegacyStagingDirName = ".doorman-desbloqueo";
     const string DesktopIni = "desktop.ini";
     const string DesktopIniMarker = "; DoorMan";
-    const string UnlockedMarker = DesktopIniMarker + " desbloqueada";
-    const string ReadOnlyAddedMarker = "; DoorMan-solo-lectura";
-    // Registro raíz (1 + 1 + 4 + 8 + 8 bytes) + registro final (1): lo que ocupa una carpeta vacía.
+    // Markers that versions before 3.0 wrote in the desktop.ini of unlocked folders. Never change them.
+    const string LegacyUnlockedMarker = DesktopIniMarker + " desbloqueada";
+    const string LegacyReadOnlyAddedMarker = "; DoorMan-solo-lectura";
+    // Root record (1 + 1 + 4 + 8 + 8 bytes) + end record (1): the size of an empty folder.
     const int EmptyArchiveSize = 23;
 
-    /// <summary>Solo para las pruebas: bloquear sin marcadores, como en los volúmenes que no los admiten.</summary>
+    /// <summary>Tests only: lock without placeholders, as on volumes that do not support them.</summary>
     internal static bool UsePlaceholders { get; set; } = true;
 
-    public static bool IsLocked(string folder) => File.Exists(Path.Combine(folder, VaultFileName));
+    /// <summary>The encrypted file of the folder: its current name or, if the folder was locked by an earlier version, the old one.</summary>
+    static string VaultPath(string folder)
+    {
+        var current = Path.Combine(folder, VaultFileName);
+        if (File.Exists(current))
+            return current;
+        var legacy = Path.Combine(folder, LegacyVaultFileName);
+        return File.Exists(legacy) ? legacy : current;
+    }
+
+    public static bool IsLocked(string folder) => File.Exists(VaultPath(folder));
 
     /// <summary>
-    /// Cifra el contenido de la carpeta. El archivo cifrado se escribe y se verifica por completo
-    /// antes de borrar nada; si algo falla antes de ese punto, la carpeta queda intacta.
+    /// Encrypts the content of the folder. The encrypted file is written and fully verified before anything is
+    /// deleted; if something fails before that point, the folder is left untouched.
     /// </summary>
     public static LockResult Lock(string folder, KeyMaterial key, IProgress<ProgressInfo>? progress = null)
     {
         if (!Directory.Exists(folder))
-            throw new UserFacingException("La carpeta no existe.");
+            throw new UserFacingException(Strings.FolderDoesNotExist);
         if (IsLocked(folder))
-            throw new UserFacingException("La carpeta ya está protegida.");
+            throw new UserFacingException(Strings.FolderAlreadyProtected);
 
         RemoveUnlockedAppearance(folder);
         var tmp = Path.Combine(folder, TempFileName);
         DeleteFile(tmp);
-        var scan = FolderScan.Run(folder, new HashSet<string>(StringComparer.OrdinalIgnoreCase) { TempFileName, StagingDirName });
+        var scan = FolderScan.Run(folder, new HashSet<string>(StringComparer.OrdinalIgnoreCase)
+        {
+            TempFileName, StagingDirName, LegacyStagingDirName,
+        });
         var tracker = new ProgressTracker(progress, scan.TotalBytes * 2);
 
         try
@@ -63,7 +79,7 @@ internal static class FolderLocker
                 fs.Flush(flushToDisk: true);
             }
 
-            tracker.SetItem("Comprobando el archivo cifrado…");
+            tracker.SetItem(Strings.CheckingEncryptedFile);
             using (var fs = new FileStream(tmp, FileMode.Open, FileAccess.Read, FileShare.None, 1, FileOptions.SequentialScan))
             {
                 var header = VaultFile.ReadHeader(fs);
@@ -77,12 +93,11 @@ internal static class FolderLocker
             throw;
         }
 
-        var vault = Path.Combine(folder, VaultFileName);
-        File.Move(tmp, vault);
+        File.Move(tmp, Path.Combine(folder, VaultFileName));
         HideVault(folder);
 
-        tracker.SetItem("Eliminando los archivos sin cifrar…");
-        // Una raíz que haya quedado registrada (p. ej. tras un corte de luz) se da de baja antes.
+        tracker.SetItem(Strings.RemovingUnencryptedFiles);
+        // A sync root left registered (for example, after a power cut) is unregistered first.
         CloudFiles.Unregister(folder);
         LockResult? result = null;
         if (UsePlaceholders && CloudFiles.TryRegister(folder))
@@ -102,8 +117,8 @@ internal static class FolderLocker
     }
 
     /// <summary>
-    /// Deja cada archivo como marcador sin contenido. Si uno no se puede convertir, se borra como en
-    /// el modo sin marcadores.
+    /// Leaves each file as a placeholder without content. If one cannot be converted, it is deleted as in the mode
+    /// without placeholders.
     /// </summary>
     static LockResult ConvertToPlaceholders(FolderScan scan)
     {
@@ -117,7 +132,7 @@ internal static class FolderLocker
             }
             catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or COMException)
             {
-                // Una carpeta normal dentro de la raíz también funciona.
+                // A normal folder inside the sync root works too.
             }
         }
         foreach (var e in scan.Entries.Where(e => e.Kind == EntryKind.File))
@@ -143,10 +158,10 @@ internal static class FolderLocker
         return new LockResult(notDeleted, inUse);
     }
 
-    /// <summary>Oculta el archivo cifrado como archivo de sistema.</summary>
+    /// <summary>Hides the encrypted file as a system file.</summary>
     public static void HideVault(string folder)
     {
-        var vault = Path.Combine(folder, VaultFileName);
+        var vault = VaultPath(folder);
         const FileAttributes hidden = FileAttributes.Hidden | FileAttributes.System;
         try
         {
@@ -158,30 +173,30 @@ internal static class FolderLocker
         }
     }
 
-    /// <summary>Lee la cabecera y comprueba la contraseña sin tocar la carpeta.</summary>
+    /// <summary>Reads the header and checks the password without touching the folder.</summary>
     /// <exception cref="WrongPasswordException" />
     public static KeyMaterial OpenKey(string folder, string password)
     {
-        using var fs = new FileStream(Path.Combine(folder, VaultFileName), FileMode.Open, FileAccess.Read, FileShare.Read);
+        using var fs = new FileStream(VaultPath(folder), FileMode.Open, FileAccess.Read, FileShare.Read);
         return KeyMaterial.Open(VaultFile.GetEnvelope(VaultFile.ReadHeader(fs)), password);
     }
 
     /// <summary>
-    /// Descifra el contenido. Primero se descifra todo en una carpeta oculta dentro de la propia
-    /// carpeta; si eso falla, la carpeta queda bloqueada y sin cambios. Después cada archivo pasa a su
-    /// sitio en lugar de su marcador.
+    /// Decrypts the content. Everything is first decrypted into a hidden folder inside the folder itself; if that
+    /// fails, the folder stays locked and unchanged. Then each file takes the place of its placeholder.
     /// </summary>
     /// <param name="extracted">
-    /// Se llama con la carpeta del contenido descifrado antes de colocarlo. El agente la usa para
-    /// entregar los archivos que algún programa está esperando y desconectarse de la carpeta.
+    /// Called with the folder holding the decrypted content before it is moved into place. The agent uses it to
+    /// hand over the files some app is waiting for and to disconnect from the folder.
     /// </param>
     public static void Unlock(string folder, KeyMaterial key, IProgress<ProgressInfo>? progress = null, Action<string>? extracted = null)
     {
-        var vault = Path.Combine(folder, VaultFileName);
+        var vault = VaultPath(folder);
         var staging = Path.Combine(folder, StagingDirName);
         ArchiveEntry root;
 
         DeleteTree(staging);
+        DeleteTree(Path.Combine(folder, LegacyStagingDirName));
         try
         {
             var dir = Directory.CreateDirectory(staging);
@@ -212,7 +227,7 @@ internal static class FolderLocker
         ShellNotify.ItemChanged(folder);
     }
 
-    /// <summary>Coloca el contenido descifrado en la carpeta, sustituyendo los marcadores.</summary>
+    /// <summary>Puts the decrypted content in the folder, replacing the placeholders.</summary>
     static void MoveIntoPlace(string staging, string folder)
     {
         var dirs = new List<(string Path, FileAttributes Attributes, DateTime Created, DateTime Written)>();
@@ -225,7 +240,7 @@ internal static class FolderLocker
                 {
                     if (File.Exists(destination))
                         destination = UniquePath(destination);
-                    // Las fechas se toman antes de vaciarla, que las cambia.
+                    // The dates are taken before emptying it, which changes them.
                     dirs.Add((destination, sub.Attributes, sub.CreationTimeUtc, sub.LastWriteTimeUtc));
                     Directory.CreateDirectory(destination);
                     Walk(sub, destination);
@@ -260,11 +275,11 @@ internal static class FolderLocker
                     DeleteFile(destination);
                     break;
                 case PlaceholderState.Hydrated when CloudFiles.TryRevert(destination, isDirectory: false):
-                    // Un programa ya recibió este contenido (o estaba abierto al bloquear): es el mismo archivo.
+                    // An app already got this content (or it was open while locking): it is the same file.
                     DeleteFile(source);
                     return;
                 default:
-                    // Un archivo creado mientras la carpeta estaba bloqueada: se conservan los dos.
+                    // A file created while the folder was locked: both are kept.
                     destination = UniquePath(destination);
                     break;
             }
@@ -273,8 +288,8 @@ internal static class FolderLocker
     }
 
     /// <summary>
-    /// Marcadores que no corresponden a nada del archivo cifrado (p. ej. se renombraron mientras la
-    /// carpeta estaba bloqueada): su contenido ya está en su sitio con el nombre original.
+    /// Placeholders that match nothing in the encrypted file (for example, they were renamed while the folder was
+    /// locked): their content is already in place under the original name.
     /// </summary>
     static void RemoveLeftoverPlaceholders(string folder)
     {
@@ -313,7 +328,7 @@ internal static class FolderLocker
                 failed.Add(e.RelativePath);
             }
         }
-        // En orden inverso: las subcarpetas aparecen después de su carpeta padre.
+        // In reverse order: subfolders come after their parent folder.
         for (int i = scan.Entries.Count - 1; i >= 0; i--)
         {
             var e = scan.Entries[i];
@@ -337,8 +352,8 @@ internal static class FolderLocker
     }
 
     /// <summary>
-    /// Pone al día la apariencia de una carpeta bloqueada (p. ej. con una versión anterior):
-    /// desktop.ini con la extensión que pide la contraseña, icono actual y archivo cifrado oculto.
+    /// Brings the appearance of a locked folder up to date (for example, one locked by an earlier version):
+    /// desktop.ini with the extension that asks for the password, the current icon and a hidden encrypted file.
     /// </summary>
     public static void RefreshLockedAppearance(string folder)
     {
@@ -360,9 +375,9 @@ internal static class FolderLocker
     }
 
     /// <summary>
-    /// Deja la carpeta con el icono normal de Windows. Las versiones anteriores ponían un icono propio
-    /// a las carpetas desbloqueadas: se quita antes de bloquear, al dejar de gestionarla y al
-    /// sincronizar. Solo se toca un desktop.ini escrito por DoorMan.
+    /// Leaves the folder with the normal Windows icon. Earlier versions gave unlocked folders an icon of their own:
+    /// it is removed before locking, when DoorMan stops managing the folder and when syncing. Only a desktop.ini
+    /// written by DoorMan is touched.
     /// </summary>
     public static void RemoveUnlockedAppearance(string folder)
     {
@@ -372,11 +387,11 @@ internal static class FolderLocker
             if (!File.Exists(path))
                 return;
             var text = File.ReadAllText(path);
-            if (!text.Contains(UnlockedMarker))
+            if (!text.Contains(LegacyUnlockedMarker))
                 return;
             ShellNotify.ClearFolderIcon(folder);
             DeleteFile(path);
-            if (text.Contains(ReadOnlyAddedMarker))
+            if (text.Contains(LegacyReadOnlyAddedMarker))
             {
                 var dir = new DirectoryInfo(folder);
                 dir.Attributes &= ~FileAttributes.ReadOnly;
@@ -388,19 +403,16 @@ internal static class FolderLocker
         }
     }
 
-    /// <summary>¿Tenía la carpeta algo dentro cuando se bloqueó? Se deduce del tamaño del archivo cifrado.</summary>
+    /// <summary>Did the folder have anything inside when it was locked? It follows from the size of the encrypted file.</summary>
     static bool VaultHasContent(string folder)
     {
-        var vault = new FileInfo(Path.Combine(folder, VaultFileName));
+        var vault = new FileInfo(VaultPath(folder));
         return !vault.Exists || vault.Length > VaultFile.HeaderSize + ChunkFormat.HeaderSize + ChunkFormat.TagSize + EmptyArchiveSize;
     }
 
-    const string LockedInfoTip = "Carpeta protegida con contraseña.";
-
     /// <summary>
-    /// desktop.ini de una carpeta bloqueada. El CLSID hace que el Explorador la abra a través de la
-    /// extensión, que pide la contraseña antes de mostrarla. El icono se escribe con la función del
-    /// shell para que el Explorador lo actualice al momento.
+    /// desktop.ini of a locked folder. The CLSID makes Explorer open it through the extension, which asks for the
+    /// password before showing it. The icon is written with the shell function so that Explorer updates it at once.
     /// </summary>
     static void WriteDesktopIni(string folder, bool hasContent)
     {
@@ -412,7 +424,7 @@ internal static class FolderLocker
             DesktopIniMarker + "\r\n",
             Encoding.Unicode);
         File.SetAttributes(path, FileAttributes.Hidden | FileAttributes.System);
-        ShellNotify.SetFolderIcon(folder, AppIcons.LockedFolderIcon(hasContent), LockedInfoTip);
+        ShellNotify.SetFolderIcon(folder, AppIcons.LockedFolderIcon(hasContent), Strings.ProtectedFolderType);
     }
 
     static bool RemoveDesktopIni(string folder)
@@ -420,7 +432,7 @@ internal static class FolderLocker
         var path = Path.Combine(folder, DesktopIni);
         if (!File.Exists(path) || !File.ReadAllText(path).Contains(DesktopIniMarker))
             return false;
-        // Desbloqueada vuelve al icono normal de Windows; sin esto el Explorador mostraría el de la caché.
+        // Unlocked, it goes back to the normal Windows icon; without this Explorer would show the cached one.
         ShellNotify.ClearFolderIcon(folder);
         DeleteFile(path);
         return true;

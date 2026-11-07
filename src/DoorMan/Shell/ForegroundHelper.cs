@@ -2,7 +2,7 @@ using System.Runtime.InteropServices;
 
 namespace DoorMan.Shell;
 
-/// <summary>Trae una ventana al frente aunque el proceso esté en segundo plano.</summary>
+/// <summary>Brings a window to the front even when the process is in the background.</summary>
 internal static class ForegroundHelper
 {
     [DllImport("user32.dll")]
@@ -32,7 +32,7 @@ internal static class ForegroundHelper
             SetForegroundWindow(hwnd);
             return;
         }
-        // Windows solo deja pasar al frente a quien comparte la entrada con la ventana activa.
+        // Windows only lets a thread come to the front if it shares input with the active window.
         AttachThreadInput(current, foregroundThread, true);
         BringWindowToTop(hwnd);
         SetForegroundWindow(hwnd);
