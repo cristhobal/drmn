@@ -58,9 +58,9 @@ Get the file for your PC from the [latest release](https://github.com/cristhobal
 
 | Your Windows | File |
 |---|---|
-| Windows 11 or 64-bit Windows 10 (most PCs) | `DoorMan-x64.exe` |
-| Windows 11 or Windows 10 on ARM (Snapdragon, etc.) | `DoorMan-arm64.exe` |
-| 32-bit Windows 10 | `DoorMan-x86.exe` |
+| Windows 11 or 64-bit Windows 10 (most PCs) | `drmn-x64.exe` |
+| Windows 11 or Windows 10 on ARM (Snapdragon, etc.) | `drmn-arm64.exe` |
+| 32-bit Windows 10 | `drmn-x86.exe` |
 
 Not sure? Open **Settings → System → About** and look at **System type**. If you pick the wrong file, DoorMan tells
 you which one to download.
@@ -132,7 +132,7 @@ asks for the password anyway).
   listed in `%LOCALAPPDATA%\DoorMan\unlocked.txt`), and replaces the registry entries. Windows only installs it if
   signed with a machine-trusted certificate: each build creates a new self-signed one, signs the package and destroys
   the private key right away; the installer trusts the certificate (UAC) and removes those of previous builds.
-- **Single-file installer.** Each `DoorMan-<arch>.exe` is a self-contained .NET app that carries the Explorer extension
+- **Single-file installer.** Each `drmn-<arch>.exe` is a self-contained .NET app that carries the Explorer extension
   for its architecture, the icons and the Windows 11 package as embedded resources, and extracts them when installing.
 
 ---

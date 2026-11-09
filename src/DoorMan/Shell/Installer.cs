@@ -36,7 +36,7 @@ internal static class Installer
 
     /// <summary>The file to download for this computer.</summary>
     public static string ExpectedDownload =>
-        $"DoorMan-{RuntimeInformation.OSArchitecture.ToString().ToLowerInvariant()}.exe";
+        $"drmn-{RuntimeInformation.OSArchitecture.ToString().ToLowerInvariant()}.exe";
 
     public const string DownloadUrl = "https://github.com/cristhobal/drmn/releases/latest";
 
